@@ -1,0 +1,6 @@
+docs/**
+tests/**
+README.md
+PROJECT_SPEC.md
+.gitignore
+.claspignore

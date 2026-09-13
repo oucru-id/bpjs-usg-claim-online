@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <base target="_top">
+  <?!= include_('Styles'); ?>
+</head>
+<body data-initial-view="<?= initialView ?>" data-initial-claim-id="<?= initialClaimId ?>" data-initial-mobile-token="<?= initialMobileToken ?>">
+  <main id="login-view" class="centered login-page hidden">
+    <section class="card denied">
+      <div class="google-mark">BP</div>
+      <h1>Masuk ke BPJS USG</h1>
+      <p>Gunakan nama pengguna dan kata sandi yang diberikan administrator.</p>
+      <p id="login-message" class="message error hidden" role="alert"></p>
+      <form id="login-form" class="login-form">
+        <label>Nama pengguna<input name="username" required minlength="4" maxlength="64" autocomplete="username" autocapitalize="none"></label>
+        <label>Kata sandi<input name="password" type="password" required maxlength="128" autocomplete="current-password"></label>
+        <button id="login-button" class="primary" type="submit">Masuk</button>
+      </form>
+      <p class="muted">Hubungi administrator jika lupa kata sandi.</p>
+    </section>
+  </main>
+  <main id="password-change-view" class="centered login-page hidden">
+    <section class="card denied">
+      <div class="google-mark">BP</div>
+      <h1>Ganti Kata Sandi</h1>
+      <p>Anda menggunakan kata sandi awal. Buat kata sandi baru sebelum melanjutkan.</p>
+      <p id="password-change-message" class="message error hidden" role="alert"></p>
+      <form id="password-change-form" class="login-form">
+        <label>Kata sandi baru<input name="new_password" type="password" required minlength="6" maxlength="128" autocomplete="new-password"></label>
+        <label>Ulangi kata sandi baru<input name="password_confirmation" type="password" required minlength="6" maxlength="128" autocomplete="new-password"></label>
+        <button id="password-change-button" class="primary" type="submit">Simpan Kata Sandi Baru</button>
+        <button id="password-change-logout-button" type="button">Keluar</button>
+      </form>
+      <p class="muted">Minimal 6 karakter dan tidak boleh menggunakan admin123 lagi.</p>
+    </section>
+  </main>
+  <div id="app-shell" class="hidden">
+  <header class="topbar">
+    <div>
+      <div class="brand">BPJS USG</div>
+      <div class="muted" id="app-version"></div>
+    </div>
+    <div class="identity-row">
+      <div class="identity"><strong id="current-user">Memuat...</strong><span id="current-facility"></span></div>
+      <button type="button" id="logout-button" class="hidden">Keluar</button>
+    </div>
+  </header>
+  <?!= include_('Components'); ?>
+  <main class="container">
+    <div id="global-message" class="message hidden" role="status" aria-live="polite"></div>
+
+    <section id="view-dashboard" class="view hidden">
+      <div class="section-heading">
+        <div><h1>Daftar Klaim USG</h1><p>Cari, buka, dan kelola klaim yang dapat Anda akses.</p></div>
+        <button id="new-claim-button" class="primary hidden" type="button">+ Buat Klaim Baru</button>
+      </div>
+      <form id="claim-filter-form" class="card filter-form">
+        <label>Cari klaim<input name="search" type="search" maxlength="120" placeholder="Kode klaim, nama pasien, atau NIK"></label>
+        <label>Status<select name="status"><option value="">Semua status aktif</option><option value="DRAFT">Draf</option><option value="COLLECTING_DOCUMENTS">Mengumpulkan berkas</option><option value="READY">Siap</option><option value="PDF_GENERATED">PDF dibuat</option><option value="COMPLETED">Selesai</option><option value="ARCHIVED">Diarsipkan</option></select></label>
+        <label>Tanggal pemeriksaan<input name="examination_date" type="date"></label>
+        <label id="include-archived-label" class="check admin-only hidden"><input name="include_archived" type="checkbox"> Sertakan arsip</label>
+        <div class="filter-actions"><button type="button" id="reset-claim-filter">Atur Ulang</button><button class="primary" id="search-claim-button" type="submit">Cari</button></div>
+      </form>
+      <div id="claim-summary" class="grid three summary-grid"></div>
+      <div class="card table-wrap">
+        <table class="claims-table"><thead><tr><th>Kode klaim</th><th>Pasien</th><th>NIK</th><th>Tanggal USG</th><th>Fasilitas</th><th>Status</th><th></th></tr></thead><tbody id="claims-body"></tbody></table>
+        <p id="claims-empty" class="empty-state hidden">Belum ada klaim yang sesuai.</p>
+      </div>
+    </section>
+
+    <section id="view-orthanc" class="view hidden">
+      <div class="section-heading">
+        <div><h1>Kotak Masuk Orthanc</h1><p>Pilih pemeriksaan USG yang sudah dikirim dari alat ke Orthanc, lalu periksa data pasien sebelum membuat klaim.</p></div>
+        <button id="refresh-orthanc-button" class="primary" type="button">Perbarui Daftar</button>
+      </div>
+      <p class="warning-box">Data DICOM adalah data awal. Pastikan nama, NIK, tanggal lahir, tanggal pemeriksaan, dan seluruh gambar benar sebelum membuat klaim.</p>
+      <label class="check orthanc-processed-filter"><input id="orthanc-include-processed" type="checkbox"> Tampilkan pemeriksaan yang sudah diimpor atau diabaikan</label>
+      <div class="card table-wrap">
+        <table class="orthanc-table"><thead><tr><th>Diterima</th><th>Pasien</th><th>ID pasien</th><th>Tanggal USG</th><th>Gambar</th><th>Status</th><th></th></tr></thead><tbody id="orthanc-inbox-body"></tbody></table>
+        <p id="orthanc-inbox-empty" class="empty-state hidden">Belum ada pemeriksaan dari OrthancBridge.</p>
+      </div>
+    </section>
+
+    <section id="view-claim" class="view hidden">
+      <div class="section-heading">
+        <div><button id="back-to-claims" class="back-button" type="button">&larr; Kembali ke daftar</button><h1 id="claim-detail-code">Detail Klaim</h1></div>
+        <span id="claim-detail-status" class="status">Memuat</span>
+      </div>
+      <div class="grid two">
+        <article class="card detail-card"><span class="detail-label">Nama pasien</span><strong id="claim-detail-name">-</strong></article>
+        <article class="card detail-card"><span class="detail-label">NIK</span><strong id="claim-detail-nik">-</strong></article>
+        <article class="card detail-card"><span class="detail-label">Tanggal lahir</span><strong id="claim-detail-birth-date">-</strong></article>
+        <article class="card detail-card"><span class="detail-label">Tanggal pemeriksaan USG</span><strong id="claim-detail-examination-date">-</strong></article>
+        <article class="card detail-card"><span class="detail-label">Fasilitas</span><strong id="claim-detail-facility">-</strong></article>
+        <article class="card detail-card"><span class="detail-label">Terakhir diperbarui</span><strong id="claim-detail-updated">-</strong></article>
+      </div>
+      <div id="claim-detail-actions" class="card claim-actions">
+        <button id="edit-claim-button" type="button">Edit Data Klaim</button>
+        <button id="start-collection-button" class="primary" type="button">Mulai Pengumpulan Berkas</button>
+        <button id="archive-claim-button" class="danger-button admin-only hidden" type="button">Arsipkan Klaim</button>
+      </div>
+      <section id="claim-documents-section">
+        <article class="card upload-card">
+          <div class="section-heading compact-heading">
+            <div><h2>Gambar USG dari Komputer</h2><p>Pilih beberapa gambar JPEG atau PNG hasil ekspor USG.</p></div>
+          </div>
+          <div id="pc-upload-controls" class="upload-controls">
+            <label class="file-picker">Pilih Gambar USG<input id="pc-usg-input" type="file" accept="image/jpeg,image/png" multiple></label>
+            <button id="pc-upload-button" class="primary" type="button" disabled>Unggah Gambar</button>
+          </div>
+          <p id="pc-selected-files" class="muted">Belum ada gambar dipilih.</p>
+          <div id="pc-upload-progress" class="upload-progress hidden" role="status"></div>
+        </article>
+
+        <article class="card upload-card">
+          <div class="section-heading compact-heading">
+            <div><h2>Unggah Berkas Pendukung</h2><p>Di ponsel, masuk ke aplikasi, pilih klaim ini, lalu ambil foto sesuai jenis berkas. Foto otomatis dikompresi maksimum HD: 1280 x 720 untuk lanskap atau 720 x 1280 untuk potret, tanpa dipotong.</p></div>
+          </div>
+          <div id="claim-supporting-upload-controls" class="supporting-upload-grid">
+            <label class="capture-button"><span>📷 KTP (Identitas)</span><input type="file" accept="image/*" capture="environment" data-claim-document-type="KTP"></label>
+            <label class="capture-button"><span>📷 Buku KIA</span><input type="file" accept="image/*" capture="environment" data-claim-document-type="BUKU_KIA"></label>
+            <label class="capture-button"><span>📷 Berkas SPP &amp; FKPP BPJS</span><input type="file" accept="image/*" capture="environment" data-claim-document-type="SPP_FKPP_BPJS"></label>
+            <label class="capture-button"><span>📷 Berkas Lainnya</span><input type="file" accept="image/*" capture="environment" data-claim-document-type="OTHER"></label>
+          </div>
+          <div id="claim-document-upload-progress" class="upload-progress hidden" role="status"></div>
+        </article>
+
+        <article id="optional-qr-upload-card" class="card upload-card hidden">
+          <div class="section-heading compact-heading">
+            <div><h2>Unggah Menggunakan QR (Opsional)</h2><p>Fitur cadangan untuk membuka klaim langsung melalui QR.</p></div>
+            <button id="create-mobile-token-button" class="primary" type="button">Buat QR Unggah</button>
+          </div>
+          <p id="mobile-token-status" class="muted">Belum ada tautan unggah aktif.</p>
+          <div id="mobile-link-panel" class="mobile-link-panel hidden">
+            <div id="mobile-qr-code" class="qr-code" aria-label="Kode QR unggah dari ponsel"></div>
+            <div class="mobile-link-copy">
+              <label>Tautan unggah ponsel<input id="mobile-upload-link" type="text" readonly></label>
+              <button id="copy-mobile-link-button" type="button">Salin Tautan</button>
+              <p class="muted">Pengguna ponsel tetap harus masuk dengan nama pengguna dan kata sandi aplikasi.</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card upload-card">
+          <div class="section-heading compact-heading"><div><h2>Berkas Klaim</h2><p>Pilih berkas untuk PDF, putar bila perlu, lalu geser kartu untuk mengatur urutan.</p></div><button id="refresh-documents-button" type="button">Perbarui Daftar</button></div>
+          <div id="document-counts" class="document-counts"></div>
+          <div id="document-grid" class="document-grid"></div>
+          <p id="documents-empty" class="empty-state">Belum ada berkas yang diunggah.</p>
+        </article>
+
+        <article id="pdf-workflow-card" class="card pdf-workflow-card">
+          <div class="section-heading compact-heading">
+            <div><h2>Siapkan PDF Klaim</h2><p>Periksa kelengkapan, buat PDF, kemudian selesaikan klaim.</p></div>
+            <span id="pdf-readiness-badge" class="status draft">Belum diperiksa</span>
+          </div>
+          <ul id="pdf-readiness-list" class="checks compact-checks"><li>Memeriksa berkas terpilih...</li></ul>
+          <div id="pdf-current-file" class="pdf-current-file hidden">
+            <strong id="pdf-current-filename">-</strong>
+            <span id="pdf-current-meta" class="muted"></span>
+          </div>
+          <div class="pdf-actions">
+            <button id="generate-pdf-button" class="primary hidden" type="button">Buat PDF</button>
+            <button id="preview-pdf-button" class="hidden" type="button">Pratinjau PDF</button>
+            <button id="download-pdf-button" class="hidden" type="button">Unduh PDF</button>
+            <button id="complete-claim-button" class="primary hidden" type="button">Selesaikan Klaim</button>
+            <button id="reopen-claim-button" class="hidden" type="button">Buka Kembali Klaim</button>
+          </div>
+          <div id="pdf-progress" class="upload-progress hidden" role="status"></div>
+        </article>
+      </section>
+    </section>
+
+    <section id="view-mobile" class="view mobile-view hidden">
+      <article id="mobile-confirmation" class="card mobile-card">
+        <div class="mobile-icon">📷</div>
+        <h1>Pastikan Pasien Sudah Benar</h1>
+        <p id="mobile-context-message" class="muted">Memeriksa tautan unggah...</p>
+        <dl id="mobile-patient-summary" class="mobile-patient-summary hidden">
+          <div><dt>Nama pasien</dt><dd id="mobile-patient-name">-</dd></div>
+          <div><dt>Tanggal USG</dt><dd id="mobile-examination-date">-</dd></div>
+          <div><dt>Fasilitas</dt><dd id="mobile-facility-name">-</dd></div>
+        </dl>
+        <p id="mobile-patient-warning" class="warning-box hidden">Pastikan semua berkas yang akan difoto adalah milik pasien ini. NIK lengkap tidak ditampilkan pada ponsel.</p>
+        <button id="confirm-mobile-patient-button" class="primary hidden" type="button">Ya, Pasien Benar</button>
+      </article>
+
+      <section id="mobile-uploader" class="hidden">
+        <article class="card mobile-card">
+          <h1>Unggah Berkas</h1>
+          <p>Pasien: <strong id="mobile-upload-patient">-</strong></p>
+          <p class="muted">Setiap foto otomatis dikompresi maksimum HD (1280 x 720 untuk lanskap atau 720 x 1280 untuk potret) tanpa dipotong, lalu diunggah satu per satu.</p>
+          <div class="mobile-capture-list">
+            <label class="capture-button"><span>📷 Foto KTP (Identitas)</span><input type="file" accept="image/*" capture="environment" data-mobile-type="KTP"></label>
+            <label class="capture-button"><span>📷 Foto Buku KIA</span><input type="file" accept="image/*" capture="environment" data-mobile-type="BUKU_KIA"></label>
+            <label class="capture-button"><span>📷 Foto Berkas SPP &amp; FKPP BPJS</span><input type="file" accept="image/*" capture="environment" data-mobile-type="SPP_FKPP_BPJS"></label>
+            <label class="capture-button"><span>📷 Foto Berkas Lainnya</span><input type="file" accept="image/*" capture="environment" data-mobile-type="OTHER"></label>
+          </div>
+          <div id="mobile-upload-progress" class="upload-progress hidden" role="status"></div>
+        </article>
+        <article class="card mobile-card">
+          <h2>Foto yang Sudah Diunggah</h2>
+          <div id="mobile-document-grid" class="document-grid mobile-document-grid"></div>
+          <p id="mobile-documents-empty" class="empty-state">Belum ada foto.</p>
+          <button id="finish-mobile-upload-button" class="primary full-width" type="button">Selesai</button>
+        </article>
+      </section>
+    </section>
+
+    <section id="view-users" class="view hidden">
+      <div class="section-heading"><div><h1>Pengguna</h1><p>Kelola akun, peran, dan kata sandi aplikasi.</p></div><button id="add-user-button" class="primary">+ Tambah Pengguna</button></div>
+      <div class="card table-wrap"><table><thead><tr><th>Nama</th><th>Nama pengguna</th><th>Email</th><th>Peran</th><th>Fasilitas</th><th>Status</th><th></th></tr></thead><tbody id="users-body"></tbody></table></div>
+    </section>
+
+    <section id="view-system" class="view hidden">
+      <div class="section-heading"><div><h1>Sistem</h1><p>Diagnostik konfigurasi tanpa menampilkan ID penyimpanan.</p></div><button id="diagnostics-button" class="primary">Jalankan Diagnostik</button></div>
+      <div id="system-summary" class="grid two"></div>
+      <div class="card orthanc-system-card">
+        <div class="section-heading compact-heading"><div><h2>OrthancBridge</h2><p>Hubungkan Orthanc lokal tanpa membuka port Orthanc ke internet.</p></div><span id="orthanc-bridge-badge" class="status off">Belum diperiksa</span></div>
+        <div class="grid two">
+          <label>ID bridge<input id="orthanc-bridge-id" type="text" readonly></label>
+          <label>Endpoint Apps Script<input id="orthanc-bridge-endpoint" type="text" readonly></label>
+        </div>
+        <p id="orthanc-bridge-last-seen" class="muted">Belum ada data bridge.</p>
+        <div id="orthanc-bridge-counts" class="document-counts"></div>
+        <div class="actions orthanc-system-actions">
+          <button id="toggle-orthanc-bridge-button" type="button">Aktifkan Bridge</button>
+          <button id="rotate-orthanc-key-button" class="primary" type="button">Buat Kunci Koneksi</button>
+        </div>
+      </div>
+      <div class="card"><h2>Pemeriksaan</h2><ul id="diagnostics-list" class="checks"><li>Belum dijalankan.</li></ul></div>
+    </section>
+  </main>
+  </div>
+
+  <dialog id="user-dialog">
+    <form id="user-form">
+      <input name="user_id" type="hidden">
+      <div class="dialog-heading"><h2 id="user-dialog-title">Tambah Pengguna</h2><button type="button" class="icon-button" id="close-user-dialog" aria-label="Tutup">&times;</button></div>
+      <label>Nama pengguna<input name="username" required minlength="4" maxlength="64" autocomplete="off" autocapitalize="none"></label>
+      <label>Kata sandi <span class="muted" id="password-help">Kosongkan untuk memakai kata sandi awal admin123.</span><input name="password" type="password" minlength="6" maxlength="128" autocomplete="new-password"></label>
+      <label>Ulangi kata sandi<input name="password_confirmation" type="password" minlength="6" maxlength="128" autocomplete="new-password"></label>
+      <label>Email kontak<input name="google_email" type="email" required autocomplete="off"></label>
+      <label>Nama<input name="full_name" required maxlength="120"></label>
+      <label>Peran<select name="role"><option value="STAFF">Staf</option><option value="ADMIN">Administrator</option></select></label>
+      <label>Fasilitas<select name="facility_id" required></select></label>
+      <label class="check"><input name="active" type="checkbox" checked> Aktif</label>
+      <fieldset><legend>Izin staf</legend>
+        <label class="check"><input name="can_create_claim" type="checkbox" checked> Buat klaim</label>
+        <label class="check"><input name="can_view_all_claims" type="checkbox"> Lihat semua klaim</label>
+        <label class="check"><input name="can_generate_pdf" type="checkbox" checked> Buat PDF</label>
+        <label class="check"><input name="can_download_pdf" type="checkbox" checked> Unduh PDF</label>
+      </fieldset>
+      <div class="actions"><button type="button" id="cancel-user-button">Batal</button><button class="primary" id="save-user-button" type="submit">Simpan</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="claim-dialog">
+    <form id="claim-form">
+      <input name="claim_id" type="hidden">
+      <div class="dialog-heading"><h2 id="claim-dialog-title">Buat Klaim USG BPJS</h2><button type="button" class="icon-button" id="close-claim-dialog" aria-label="Tutup">&times;</button></div>
+      <p class="muted form-intro">Pastikan seluruh data sesuai dengan pasien sebelum menyimpan.</p>
+      <label>Nama pasien<input name="patient_name" required minlength="2" maxlength="120" autocomplete="off"></label>
+      <label>NIK<input name="patient_nik" required inputmode="numeric" pattern="[0-9]{16}" minlength="16" maxlength="16" autocomplete="off"><span class="muted">Masukkan tepat 16 angka.</span></label>
+      <div class="grid two form-grid">
+        <label>Tanggal lahir<input name="patient_birth_date" type="date" required></label>
+        <label>Tanggal pemeriksaan USG<input name="examination_date" type="date" required></label>
+      </div>
+      <label>Fasilitas<select name="facility_id" required></select></label>
+      <div class="actions"><button type="button" id="cancel-claim-button">Batal</button><button class="primary" id="save-claim-button" type="submit">Simpan Klaim</button></div>
+    </form>
+  </dialog>
+  <dialog id="orthanc-import-dialog" class="preview-dialog">
+    <form id="orthanc-import-form">
+      <input name="inbox_id" type="hidden">
+      <div class="dialog-heading"><h2>Tinjau Pemeriksaan Orthanc</h2><button type="button" class="icon-button" id="close-orthanc-dialog" aria-label="Tutup">&times;</button></div>
+      <p id="orthanc-source-summary" class="muted"></p>
+      <div id="orthanc-import-warning" class="warning-box hidden"></div>
+      <label>Nama pasien<input name="patient_name" required minlength="2" maxlength="120" autocomplete="off"></label>
+      <label>NIK<input name="patient_nik" required inputmode="numeric" pattern="[0-9]{16}" minlength="16" maxlength="16" autocomplete="off"><span class="muted">PatientID hanya digunakan otomatis apabila terdiri dari tepat 16 angka.</span></label>
+      <div class="grid two form-grid">
+        <label>Tanggal lahir<input name="patient_birth_date" type="date" required></label>
+        <label>Tanggal pemeriksaan USG<input name="examination_date" type="date" required></label>
+      </div>
+      <label>Fasilitas<select name="facility_id" required></select></label>
+      <fieldset>
+        <legend>Pilih gambar USG</legend>
+        <div id="orthanc-image-grid" class="document-grid orthanc-image-grid"></div>
+        <p id="orthanc-images-empty" class="empty-state hidden">Tidak ada gambar yang dapat diimpor.</p>
+      </fieldset>
+      <label class="check confirmation-check"><input name="confirmed_patient" type="checkbox" required> Saya sudah memeriksa dan memastikan data serta gambar berasal dari pasien yang benar.</label>
+      <div class="actions"><button type="button" id="reject-orthanc-button" class="danger-button">Abaikan Pemeriksaan</button><button type="button" id="cancel-orthanc-button">Batal</button><button class="primary" id="import-orthanc-button" type="submit">Buat Klaim dari Orthanc</button></div>
+    </form>
+  </dialog>
+  <dialog id="orthanc-key-dialog">
+    <div class="preview-shell">
+      <div class="dialog-heading"><h2>Kunci OrthancBridge</h2><button type="button" class="icon-button" id="close-orthanc-key-dialog" aria-label="Tutup">&times;</button></div>
+      <p class="warning-box">Salin dan simpan kunci ini sekarang. Setelah dialog ditutup, kunci tidak dapat ditampilkan kembali.</p>
+      <label>ID bridge<input id="orthanc-key-bridge-id" type="text" readonly></label>
+      <label>Endpoint Apps Script<input id="orthanc-key-endpoint" type="text" readonly></label>
+      <label>Kunci koneksi<textarea id="orthanc-key-value" rows="4" readonly></textarea></label>
+      <div class="actions"><button id="copy-orthanc-config-button" class="primary" type="button">Salin Konfigurasi</button><button id="done-orthanc-key-button" type="button">Selesai</button></div>
+    </div>
+  </dialog>
+  <dialog id="preview-dialog" class="preview-dialog">
+    <div class="preview-shell">
+      <div class="dialog-heading"><h2 id="preview-title">Pratinjau Berkas</h2><button type="button" class="icon-button" id="close-preview-dialog" aria-label="Tutup">&times;</button></div>
+      <div id="preview-loading" class="empty-state">Memuat gambar...</div>
+      <img id="preview-image" class="preview-image hidden" alt="Pratinjau berkas klaim">
+    </div>
+  </dialog>
+  <dialog id="pdf-confirm-dialog">
+    <form id="pdf-confirm-form">
+      <div class="dialog-heading"><h2>Konfirmasi Berkas</h2><button type="button" class="icon-button" id="close-pdf-confirm-dialog" aria-label="Tutup">&times;</button></div>
+      <p>Pasien: <strong id="pdf-confirm-patient">-</strong></p>
+      <p>NIK: <strong id="pdf-confirm-nik">-</strong></p>
+      <p>Tanggal USG: <strong id="pdf-confirm-date">-</strong></p>
+      <div id="pdf-confirm-counts" class="confirmation-counts"></div>
+      <p class="warning-box">Pastikan seluruh gambar dan berkas berasal dari pasien yang sama.</p>
+      <label class="check confirmation-check"><input name="confirmed_same_patient" type="checkbox" required> Saya sudah memeriksa dan memastikan seluruh berkas milik pasien yang sama.</label>
+      <div class="actions"><button type="button" id="cancel-pdf-button">Batal</button><button class="primary" id="confirm-generate-pdf-button" type="submit">Ya, Buat PDF</button></div>
+    </form>
+  </dialog>
+  <dialog id="pdf-preview-dialog" class="pdf-preview-dialog">
+    <div class="preview-shell pdf-preview-shell">
+      <div class="dialog-heading"><h2 id="pdf-preview-title">Pratinjau PDF</h2><button type="button" class="icon-button" id="close-pdf-preview-dialog" aria-label="Tutup">&times;</button></div>
+      <div id="pdf-preview-loading" class="empty-state">Memuat PDF...</div>
+      <iframe id="pdf-preview-frame" class="pdf-preview-frame hidden" title="Pratinjau PDF klaim"></iframe>
+    </div>
+  </dialog>
+  <?!= includeOptional_('VendorQrCode'); ?>
+  <?!= include_('Scripts'); ?>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "orthanc_url": "http://127.0.0.1:8042",
+  "orthanc_username": "orthanc_bridge",
+  "orthanc_password": "GANTI_DENGAN_KATA_SANDI_ORTHANC",
+  "apps_script_url": "https://script.google.com/macros/s/DEPLOYMENT_ID/exec",
+  "bridge_id": "SALIN_DARI_MENU_SISTEM",
+  "bridge_key": "SALIN_KUNCI_96_KARAKTER_DARI_MENU_SISTEM",
+  "lookback_days": 2,
+  "poll_seconds": 60,
+  "max_images_per_study": 30,
+  "max_frames_per_instance": 1,
+  "verify_tls": true,
+  "state_file": "state.json",
+  "log_file": "logs/orthanc-bridge.log"
+}

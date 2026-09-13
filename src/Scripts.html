@@ -1,0 +1,1617 @@
+<script>
+  (function () {
+    'use strict';
+    var SESSION_STORAGE_KEY = 'bpjs_app_session';
+
+    function readStoredSessionToken() {
+      var token = '';
+      try {
+        token = localStorage.getItem(SESSION_STORAGE_KEY) || '';
+      } catch (error) {
+        // Some privacy modes can block persistent storage. Use per-tab storage below.
+      }
+      if (!token) {
+        try {
+          token = sessionStorage.getItem(SESSION_STORAGE_KEY) || '';
+          if (token) localStorage.setItem(SESSION_STORAGE_KEY, token);
+        } catch (error) {
+          // A missing token is handled by the normal login screen.
+        }
+      }
+      return token;
+    }
+
+    function storeSessionToken(token) {
+      try { localStorage.setItem(SESSION_STORAGE_KEY, token); } catch (error) { /* fallback below */ }
+      try { sessionStorage.setItem(SESSION_STORAGE_KEY, token); } catch (error) { /* server session still applies */ }
+    }
+
+    function removeStoredSessionToken() {
+      try { localStorage.removeItem(SESSION_STORAGE_KEY); } catch (error) { /* no action needed */ }
+      try { sessionStorage.removeItem(SESSION_STORAGE_KEY); } catch (error) { /* no action needed */ }
+    }
+
+    var state = {
+      bootstrap: null,
+      users: [],
+      facilities: [],
+      claims: [],
+      currentClaim: null,
+      documents: [],
+      pdfPreparation: null,
+      pdfObjectUrl: '',
+      draggedDocumentId: '',
+      claimFacilities: [],
+      orthancInbox: [],
+      currentOrthanc: null,
+      orthancBridgeStatus: null,
+      mobileContext: null,
+      mobileUploadUrl: '',
+      sessionToken: readStoredSessionToken()
+    };
+    var initialView = document.body.dataset.initialView || 'dashboard';
+    var initialClaimId = document.body.dataset.initialClaimId || '';
+    var initialMobileToken = document.body.dataset.initialMobileToken || '';
+
+    function callServer(name, args, onSuccess, button, onError) {
+      if (button) button.disabled = true;
+      var callArguments = [state.sessionToken].concat(args || []);
+      var runner = google.script.run
+        .withSuccessHandler(function (response) {
+          if (button) button.disabled = false;
+          if (!response || response.success !== true) {
+            var message = response && response.message ? response.message : 'Terjadi kesalahan. Silakan coba kembali.';
+            if (onError) onError(message, response ? response.code : 'UNEXPECTED_ERROR');
+            else handleServerError(message, response ? response.code : 'UNEXPECTED_ERROR');
+            return;
+          }
+          if (onSuccess) onSuccess(response.data);
+        })
+        .withFailureHandler(function () {
+          if (button) button.disabled = false;
+          var message = 'Terjadi kesalahan. Silakan coba kembali.';
+          if (onError) onError(message, 'SERVER_FAILURE');
+          else handleServerError(message, 'SERVER_FAILURE');
+        });
+      runner[name].apply(runner, callArguments);
+    }
+
+    function callPublicServer(name, args, onSuccess, button, onError) {
+      if (button) button.disabled = true;
+      var runner = google.script.run
+        .withSuccessHandler(function (response) {
+          if (button) button.disabled = false;
+          if (!response || response.success !== true) {
+            if (onError) onError(response && response.message ? response.message : 'Gagal masuk.');
+            return;
+          }
+          onSuccess(response.data);
+        })
+        .withFailureHandler(function () {
+          if (button) button.disabled = false;
+          if (onError) onError('Terjadi kesalahan. Silakan coba kembali.');
+        });
+      runner[name].apply(runner, args || []);
+    }
+
+    function handleServerError(message, code) {
+      if (code === 'PASSWORD_CHANGE_REQUIRED') {
+        showPasswordChange(message);
+        return;
+      }
+      if (['IDENTITY_UNAVAILABLE', 'SESSION_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED'].indexOf(code) >= 0) {
+        clearSession();
+        showLogin(message);
+        return;
+      }
+      showMessage(message, true);
+    }
+
+    function showLogin(message) {
+      document.getElementById('app-shell').classList.add('hidden');
+      document.getElementById('password-change-view').classList.add('hidden');
+      document.getElementById('login-view').classList.remove('hidden');
+      var error = document.getElementById('login-message');
+      if (message) {
+        error.textContent = message;
+        error.classList.remove('hidden');
+      } else {
+        error.classList.add('hidden');
+      }
+    }
+
+    function showApplication() {
+      document.getElementById('login-view').classList.add('hidden');
+      document.getElementById('password-change-view').classList.add('hidden');
+      document.getElementById('app-shell').classList.remove('hidden');
+    }
+
+    function showPasswordChange(message) {
+      document.getElementById('login-view').classList.add('hidden');
+      document.getElementById('app-shell').classList.add('hidden');
+      document.getElementById('password-change-view').classList.remove('hidden');
+      var error = document.getElementById('password-change-message');
+      if (message) {
+        error.textContent = message;
+        error.classList.remove('hidden');
+      } else {
+        error.classList.add('hidden');
+      }
+    }
+
+    function clearSession() {
+      state.sessionToken = '';
+      removeStoredSessionToken();
+    }
+
+    function showMessage(message, isError) {
+      var element = document.getElementById('global-message');
+      element.textContent = message;
+      element.classList.toggle('error', Boolean(isError));
+      element.classList.remove('hidden');
+      window.setTimeout(function () { element.classList.add('hidden'); }, 6000);
+    }
+
+    function showView(view) {
+      document.querySelectorAll('.view').forEach(function (element) { element.classList.add('hidden'); });
+      var target = document.getElementById('view-' + view) || document.getElementById('view-dashboard');
+      target.classList.remove('hidden');
+      document.body.classList.toggle('mobile-mode', view === 'mobile');
+      if (view === 'users') loadUsers();
+      if (view === 'dashboard') loadClaims();
+      if (view === 'orthanc') loadOrthancInbox();
+      if (view === 'system') loadOrthancBridgeStatus();
+    }
+
+    function initialize(bootstrap) {
+      state.bootstrap = bootstrap;
+      if (bootstrap.mustChangePassword) {
+        showPasswordChange('Ganti kata sandi awal untuk melanjutkan.');
+        return;
+      }
+      document.getElementById('app-version').textContent = bootstrap.appVersion;
+      document.getElementById('current-user').textContent = bootstrap.user.full_name || bootstrap.user.google_email;
+      document.getElementById('current-facility').textContent = bootstrap.user.facility_name || bootstrap.user.role;
+      document.getElementById('new-claim-button').classList.toggle('hidden', !bootstrap.user.can_create_claim);
+      document.getElementById('orthanc-nav-button').classList.toggle('hidden',
+        !bootstrap.user.can_create_claim || !(bootstrap.features && bootstrap.features.orthanc_bridge));
+      document.getElementById('optional-qr-upload-card').classList.toggle('hidden',
+        !(bootstrap.features && bootstrap.features.mobile_qr_upload));
+      if (bootstrap.authMode === 'USERNAME_PASSWORD') document.getElementById('logout-button').classList.remove('hidden');
+      if (bootstrap.user.role === 'ADMIN') {
+        document.querySelectorAll('.admin-only').forEach(function (element) { element.classList.remove('hidden'); });
+      } else if (['users', 'system'].indexOf(initialView) >= 0) {
+        initialView = 'dashboard';
+      }
+      if (initialView === 'orthanc' && !(bootstrap.features && bootstrap.features.orthanc_bridge)) initialView = 'dashboard';
+      showApplication();
+      if (initialView === 'mobile') initializeMobileUpload();
+      else if (initialView === 'claim' && initialClaimId) openClaimDetail(initialClaimId);
+      else showView(initialView === 'claim' ? 'dashboard' : initialView);
+    }
+
+    function claimStatusLabel(status) {
+      return {
+        DRAFT: 'Draf',
+        COLLECTING_DOCUMENTS: 'Mengumpulkan berkas',
+        READY: 'Siap',
+        PDF_GENERATED: 'PDF dibuat',
+        COMPLETED: 'Selesai',
+        ARCHIVED: 'Diarsipkan'
+      }[status] || status || '-';
+    }
+
+    function claimStatusClass(status) {
+      return {
+        DRAFT: 'draft',
+        COLLECTING_DOCUMENTS: 'collecting',
+        READY: 'ready',
+        PDF_GENERATED: 'ready',
+        COMPLETED: 'completed',
+        ARCHIVED: 'archived'
+      }[status] || '';
+    }
+
+    function formatIndonesianDate(value) {
+      if (!value) return '-';
+      var parts = String(value).substring(0, 10).split('-');
+      if (parts.length !== 3) return value;
+      var date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      return new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
+    }
+
+    function formatIndonesianDateTime(value) {
+      if (!value) return '-';
+      var date = new Date(value);
+      if (isNaN(date.getTime())) return value;
+      return new Intl.DateTimeFormat('id-ID', {
+        day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Makassar'
+      }).format(date) + ' WITA';
+    }
+
+    function claimFilters() {
+      var form = document.getElementById('claim-filter-form');
+      return {
+        search: form.elements.search.value,
+        status: form.elements.status.value,
+        examination_date: form.elements.examination_date.value,
+        include_archived: form.elements.include_archived.checked
+      };
+    }
+
+    function loadClaims() {
+      var button = document.getElementById('search-claim-button');
+      callServer('listClaims', [claimFilters()], function (data) {
+        state.claims = data.claims || [];
+        renderClaimSummary(data);
+        renderClaims(data);
+      }, button);
+    }
+
+    function renderClaimSummary(data) {
+      var container = document.getElementById('claim-summary');
+      container.textContent = '';
+      var items = [
+        ['Jumlah ditemukan', data.total || 0],
+        ['Draf', data.counts && data.counts.DRAFT ? data.counts.DRAFT : 0],
+        ['Mengumpulkan berkas', data.counts && data.counts.COLLECTING_DOCUMENTS ? data.counts.COLLECTING_DOCUMENTS : 0]
+      ];
+      items.forEach(function (item) {
+        var card = document.createElement('article'); card.className = 'card detail-card';
+        var label = document.createElement('span'); label.className = 'detail-label'; label.textContent = item[0];
+        var value = document.createElement('strong'); value.textContent = String(item[1]);
+        card.append(label, value); container.appendChild(card);
+      });
+    }
+
+    function renderClaims(data) {
+      var body = document.getElementById('claims-body');
+      body.textContent = '';
+      state.claims.forEach(function (claim) {
+        var row = document.createElement('tr');
+        var values = [
+          claim.claim_code,
+          claim.patient_name_masked,
+          claim.patient_nik_masked,
+          formatIndonesianDate(claim.examination_date),
+          claim.facility_name
+        ];
+        values.forEach(function (value) {
+          var cell = document.createElement('td'); cell.textContent = value || '-'; row.appendChild(cell);
+        });
+        var statusCell = document.createElement('td');
+        var status = document.createElement('span'); status.className = 'status ' + claimStatusClass(claim.status); status.textContent = claimStatusLabel(claim.status); statusCell.appendChild(status); row.appendChild(statusCell);
+        var actionCell = document.createElement('td');
+        var open = document.createElement('button'); open.type = 'button'; open.textContent = 'Buka'; open.addEventListener('click', function () { openClaimDetail(claim.claim_id); }); actionCell.appendChild(open); row.appendChild(actionCell);
+        body.appendChild(row);
+      });
+      document.getElementById('claims-empty').classList.toggle('hidden', state.claims.length > 0);
+      if (data.truncated) showMessage('Hanya 200 klaim terbaru yang ditampilkan. Persempit pencarian Anda.', false);
+    }
+
+    function orthancStatusLabel(status) {
+      return {
+        RECEIVING: 'Sedang diterima',
+        READY: 'Siap ditinjau',
+        IMPORTED: 'Sudah diimpor',
+        REJECTED: 'Diabaikan',
+        ERROR: 'Gagal diterima'
+      }[status] || status || '-';
+    }
+
+    function orthancStatusClass(status) {
+      return {
+        RECEIVING: 'receiving', READY: 'ready', IMPORTED: 'completed',
+        REJECTED: 'archived', ERROR: 'error'
+      }[status] || 'off';
+    }
+
+    function loadOrthancInbox() {
+      var button = document.getElementById('refresh-orthanc-button');
+      var includeProcessed = document.getElementById('orthanc-include-processed').checked;
+      callServer('listOrthancInbox', [includeProcessed], function (items) {
+        state.orthancInbox = items || [];
+        renderOrthancInbox();
+      }, button);
+    }
+
+    function renderOrthancInbox() {
+      var body = document.getElementById('orthanc-inbox-body');
+      body.textContent = '';
+      state.orthancInbox.forEach(function (item) {
+        var row = document.createElement('tr');
+        [
+          formatIndonesianDateTime(item.updated_at),
+          item.patient_name_masked || 'Belum tersedia',
+          item.patient_id_masked || 'Belum tersedia',
+          formatIndonesianDate(item.study_date),
+          String(item.received_images || 0) + (item.skipped_images ? ' (' + item.skipped_images + ' dilewati)' : '')
+        ].forEach(function (value) {
+          var cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell);
+        });
+        var statusCell = document.createElement('td');
+        var badge = document.createElement('span');
+        badge.className = 'status ' + orthancStatusClass(item.status);
+        badge.textContent = orthancStatusLabel(item.status);
+        statusCell.appendChild(badge); row.appendChild(statusCell);
+        var actionCell = document.createElement('td');
+        if (item.status === 'READY') {
+          var review = document.createElement('button'); review.type = 'button'; review.textContent = 'Tinjau';
+          review.addEventListener('click', function () { openOrthancInbox(item.inbox_id); });
+          actionCell.appendChild(review);
+        } else if (item.status === 'IMPORTED' && item.claim_id) {
+          var open = document.createElement('button'); open.type = 'button'; open.textContent = 'Buka Klaim';
+          open.addEventListener('click', function () { openClaimDetail(item.claim_id); });
+          actionCell.appendChild(open);
+        }
+        row.appendChild(actionCell);
+        body.appendChild(row);
+      });
+      document.getElementById('orthanc-inbox-empty').classList.toggle('hidden', state.orthancInbox.length > 0);
+    }
+
+    function openOrthancInbox(inboxId) {
+      callServer('listClaimFacilities', [], function (facilities) {
+        state.claimFacilities = facilities || [];
+        callServer('getOrthancInboxDetail', [inboxId], function (detail) {
+          state.currentOrthanc = detail;
+          var form = document.getElementById('orthanc-import-form');
+          form.reset();
+          form.elements.inbox_id.value = detail.inbox_id;
+          form.elements.patient_name.value = detail.patient_name || '';
+          form.elements.patient_nik.value = detail.patient_nik_candidate || '';
+          form.elements.patient_birth_date.value = detail.patient_birth_date || '';
+          form.elements.examination_date.value = detail.study_date || '';
+          populateOrthancFacilities(state.bootstrap.user.facility_id);
+          var summary = [];
+          if (detail.study_description) summary.push(detail.study_description);
+          if (detail.accession_number) summary.push('Nomor akses: ' + detail.accession_number);
+          document.getElementById('orthanc-source-summary').textContent = summary.join(' - ') || 'Pemeriksaan dari Orthanc';
+          var warnings = [];
+          if (!detail.patient_nik_candidate) warnings.push('PatientID DICOM bukan NIK 16 angka. Isi dan periksa NIK secara manual.');
+          if (!detail.patient_birth_date) warnings.push('Tanggal lahir tidak tersedia pada DICOM. Isi secara manual.');
+          if (!detail.study_date) warnings.push('Tanggal pemeriksaan tidak tersedia atau tidak valid. Isi secara manual.');
+          if (detail.skipped_images) warnings.push(detail.skipped_images + ' gambar/frame tidak dapat dikonversi atau melewati batas impor.');
+          if (detail.bridge_message) warnings.push(detail.bridge_message);
+          var warning = document.getElementById('orthanc-import-warning');
+          warning.textContent = warnings.join(' ');
+          warning.classList.toggle('hidden', warnings.length === 0);
+          renderOrthancImages(detail.images || []);
+          document.getElementById('orthanc-import-dialog').showModal();
+        });
+      });
+    }
+
+    function populateOrthancFacilities(selected) {
+      var select = document.querySelector('#orthanc-import-form [name="facility_id"]');
+      select.textContent = '';
+      state.claimFacilities.forEach(function (facility) {
+        var option = document.createElement('option');
+        option.value = facility.facility_id;
+        option.textContent = facility.facility_name;
+        option.selected = facility.facility_id === selected;
+        select.appendChild(option);
+      });
+    }
+
+    function renderOrthancImages(images) {
+      var grid = document.getElementById('orthanc-image-grid');
+      grid.textContent = '';
+      images.forEach(function (item, index) {
+        var card = document.createElement('article'); card.className = 'orthanc-image-card';
+        var image = document.createElement('img'); image.alt = 'Pratinjau gambar USG ' + (index + 1);
+        var label = document.createElement('label');
+        var checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = !item.imported;
+        checkbox.disabled = item.imported; checkbox.dataset.orthancImageId = item.image_id;
+        var text = document.createElement('span');
+        text.textContent = 'Gambar ' + (index + 1) + ' - ' + item.image_width + ' x ' + item.image_height;
+        label.append(checkbox, text); card.append(image, label); grid.appendChild(card);
+        callServer('getOrthancInboxThumbnail', [item.image_id], function (content) {
+          image.src = 'data:' + content.mime_type + ';base64,' + content.base64;
+        }, null, function () { image.alt = 'Pratinjau tidak dapat dimuat'; });
+      });
+      document.getElementById('orthanc-images-empty').classList.toggle('hidden', images.length > 0);
+    }
+
+    function importOrthancClaim(event) {
+      event.preventDefault();
+      var form = event.currentTarget;
+      var imageIds = Array.prototype.slice.call(document.querySelectorAll('[data-orthanc-image-id]:checked'))
+        .map(function (input) { return input.dataset.orthancImageId; });
+      var payload = {
+        inbox_id: form.elements.inbox_id.value,
+        patient_name: form.elements.patient_name.value,
+        patient_nik: form.elements.patient_nik.value.replace(/\D/g, ''),
+        patient_birth_date: form.elements.patient_birth_date.value,
+        examination_date: form.elements.examination_date.value,
+        facility_id: form.elements.facility_id.value,
+        image_ids: imageIds,
+        confirmed_patient: form.elements.confirmed_patient.checked
+      };
+      callServer('createClaimFromOrthanc', [payload], function (claim) {
+        document.getElementById('orthanc-import-dialog').close();
+        state.currentOrthanc = null;
+        showMessage('Klaim berhasil dibuat dan gambar USG dari Orthanc sudah diimpor.', false);
+        openClaimDetail(claim.claim_id);
+      }, document.getElementById('import-orthanc-button'));
+    }
+
+    function rejectCurrentOrthancInbox() {
+      if (!state.currentOrthanc) return;
+      if (!window.confirm('Abaikan pemeriksaan Orthanc ini? Pemeriksaan tidak akan ditampilkan dalam daftar aktif.')) return;
+      var button = document.getElementById('reject-orthanc-button');
+      callServer('rejectOrthancInbox', [state.currentOrthanc.inbox_id], function () {
+        document.getElementById('orthanc-import-dialog').close();
+        state.currentOrthanc = null;
+        showMessage('Pemeriksaan Orthanc diabaikan.', false);
+        loadOrthancInbox();
+      }, button);
+    }
+
+    function openClaimDetail(claimId) {
+      callServer('getClaimDetail', [claimId], function (claim) {
+        state.currentClaim = claim;
+        renderClaimDetail(claim);
+        showView('claim');
+      }, null, function (message, code) {
+        if (['IDENTITY_UNAVAILABLE', 'SESSION_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED'].indexOf(code) >= 0) {
+          handleServerError(message, code);
+          return;
+        }
+        showView('dashboard');
+        showMessage(message, true);
+      });
+    }
+
+    function renderClaimDetail(claim) {
+      document.getElementById('claim-detail-code').textContent = claim.claim_code;
+      var status = document.getElementById('claim-detail-status');
+      status.className = 'status ' + claimStatusClass(claim.status);
+      status.textContent = claimStatusLabel(claim.status);
+      document.getElementById('claim-detail-name').textContent = claim.patient_name;
+      document.getElementById('claim-detail-nik').textContent = claim.patient_nik;
+      document.getElementById('claim-detail-birth-date').textContent = formatIndonesianDate(claim.patient_birth_date);
+      document.getElementById('claim-detail-examination-date').textContent = formatIndonesianDate(claim.examination_date);
+      document.getElementById('claim-detail-facility').textContent = claim.facility_name;
+      document.getElementById('claim-detail-updated').textContent = formatIndonesianDateTime(claim.updated_at || claim.created_at);
+      var editable = ['DRAFT', 'COLLECTING_DOCUMENTS'].indexOf(claim.status) >= 0;
+      document.getElementById('edit-claim-button').classList.toggle('hidden', !editable);
+      document.getElementById('start-collection-button').classList.toggle('hidden', claim.status !== 'DRAFT');
+      document.getElementById('archive-claim-button').classList.toggle('hidden', state.bootstrap.user.role !== 'ADMIN' || claim.status === 'ARCHIVED');
+      var documentsLocked = ['PDF_GENERATED', 'COMPLETED', 'ARCHIVED'].indexOf(claim.status) >= 0;
+      document.getElementById('pc-upload-controls').classList.toggle('hidden', documentsLocked);
+      document.getElementById('claim-supporting-upload-controls').classList.toggle('hidden', documentsLocked);
+      var qrEnabled = Boolean(state.bootstrap.features && state.bootstrap.features.mobile_qr_upload);
+      document.getElementById('optional-qr-upload-card').classList.toggle('hidden', !qrEnabled);
+      document.getElementById('create-mobile-token-button').classList.toggle('hidden', documentsLocked || !qrEnabled);
+      document.getElementById('mobile-token-status').textContent = claim.mobile_upload_active
+        ? 'Tautan unggah aktif sampai ' + formatIndonesianDateTime(claim.mobile_upload_expires_at) + '. Buat QR baru untuk mengganti tautan lama.'
+        : (documentsLocked ? 'Unggah berkas sudah dikunci untuk status klaim ini.' : 'Belum ada tautan unggah aktif.');
+      document.getElementById('create-mobile-token-button').textContent = claim.mobile_upload_active ? 'Buat QR Baru' : 'Buat QR Unggah';
+      document.getElementById('mobile-link-panel').classList.add('hidden');
+      document.getElementById('mobile-qr-code').textContent = '';
+      document.getElementById('mobile-upload-link').value = '';
+      state.mobileUploadUrl = '';
+      loadDocuments(claim.claim_id);
+    }
+
+    function openClaimDialog(claim) {
+      callServer('listClaimFacilities', [], function (facilities) {
+        state.claimFacilities = facilities;
+        var form = document.getElementById('claim-form');
+        form.reset();
+        form.elements.claim_id.value = claim ? claim.claim_id : '';
+        form.elements.patient_name.value = claim ? claim.patient_name : '';
+        form.elements.patient_nik.value = claim ? claim.patient_nik : '';
+        form.elements.patient_birth_date.value = claim ? claim.patient_birth_date : '';
+        form.elements.examination_date.value = claim ? claim.examination_date : '';
+        populateClaimFacilities(claim ? claim.facility_id : state.bootstrap.user.facility_id);
+        form.elements.facility_id.disabled = Boolean(claim);
+        document.getElementById('claim-dialog-title').textContent = claim ? 'Edit Data Klaim' : 'Buat Klaim USG BPJS';
+        document.getElementById('claim-dialog').showModal();
+      });
+    }
+
+    function populateClaimFacilities(selected) {
+      var select = document.querySelector('#claim-form [name="facility_id"]');
+      select.textContent = '';
+      state.claimFacilities.forEach(function (facility) {
+        var option = document.createElement('option'); option.value = facility.facility_id; option.textContent = facility.facility_name; option.selected = selected === facility.facility_id; select.appendChild(option);
+      });
+    }
+
+    function saveClaim(event) {
+      event.preventDefault();
+      var form = event.currentTarget;
+      var payload = {
+        claim_id: form.elements.claim_id.value,
+        patient_name: form.elements.patient_name.value,
+        patient_nik: form.elements.patient_nik.value.replace(/\D/g, ''),
+        patient_birth_date: form.elements.patient_birth_date.value,
+        examination_date: form.elements.examination_date.value,
+        facility_id: form.elements.facility_id.value
+      };
+      var endpoint = payload.claim_id ? 'updateClaim' : 'createClaim';
+      callServer(endpoint, [payload], function (claim) {
+        document.getElementById('claim-dialog').close();
+        showMessage(payload.claim_id ? 'Data klaim berhasil diperbarui.' : 'Klaim baru berhasil dibuat.', false);
+        openClaimDetail(claim.claim_id);
+      }, document.getElementById('save-claim-button'));
+    }
+
+    function startClaimCollection() {
+      if (!state.currentClaim) return;
+      var button = document.getElementById('start-collection-button');
+      callServer('startClaimDocumentCollection', [state.currentClaim.claim_id], function (claim) {
+        state.currentClaim = claim;
+        renderClaimDetail(claim);
+        showMessage('Status diubah menjadi Mengumpulkan berkas.', false);
+      }, button);
+    }
+
+    function archiveCurrentClaim() {
+      if (!state.currentClaim) return;
+      if (!window.confirm('Arsipkan klaim ' + state.currentClaim.claim_code + '? Klaim akan hilang dari daftar aktif.')) return;
+      var button = document.getElementById('archive-claim-button');
+      callServer('archiveClaim', [state.currentClaim.claim_id], function () {
+        state.currentClaim = null;
+        showView('dashboard');
+        showMessage('Klaim berhasil diarsipkan.', false);
+      }, button);
+    }
+
+    function serverPromise(name, args) {
+      return new Promise(function (resolve, reject) {
+        callServer(name, args, resolve, null, function (message, code) {
+          reject({ message: message, code: code });
+        });
+      });
+    }
+
+    function documentTypeLabel(type) {
+      return {
+        USG: 'Gambar USG',
+        KTP: 'KTP (Identitas)',
+        BUKU_KIA: 'Buku KIA',
+        SPP_FKPP_BPJS: 'Berkas SPP & FKPP BPJS',
+        OTHER: 'Berkas Lainnya',
+        RUJUKAN: 'Berkas Lainnya (kategori lama)',
+        BPJS: 'Berkas Lainnya (kategori lama)',
+        LAB: 'Berkas Lainnya (kategori lama)'
+      }[type] || 'Berkas';
+    }
+
+    function formatFileSize(bytes) {
+      var value = Number(bytes) || 0;
+      if (value < 1024) return value + ' B';
+      if (value < 1024 * 1024) return Math.round(value / 1024) + ' KB';
+      return (value / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function loadDocuments(claimId) {
+      callServer('listDocuments', [claimId], function (documents) {
+        state.documents = documents || [];
+        renderDocumentCounts(state.documents);
+        renderDocumentGrid('document-grid', 'documents-empty', state.documents, false);
+        loadPdfPreparation(claimId);
+      });
+    }
+
+    function renderDocumentCounts(documents) {
+      var counts = {};
+      documents.forEach(function (document) {
+        var type = ['RUJUKAN', 'BPJS', 'LAB'].indexOf(document.document_type) >= 0 ? 'OTHER' : document.document_type;
+        counts[type] = (counts[type] || 0) + 1;
+      });
+      var container = document.getElementById('document-counts');
+      container.textContent = '';
+      ['USG', 'KTP', 'BUKU_KIA', 'SPP_FKPP_BPJS', 'OTHER'].forEach(function (type) {
+        var item = document.createElement('span');
+        item.className = 'document-count';
+        item.textContent = documentTypeLabel(type) + ': ' + (counts[type] || 0);
+        container.appendChild(item);
+      });
+    }
+
+    function renderDocumentGrid(containerId, emptyId, documents, mobileMode) {
+      var container = document.getElementById(containerId);
+      container.textContent = '';
+      document.getElementById(emptyId).classList.toggle('hidden', documents.length > 0);
+      documents.forEach(function (item, itemIndex) {
+        var desktopLocked = !mobileMode && state.currentClaim &&
+          ['DRAFT', 'COLLECTING_DOCUMENTS', 'READY'].indexOf(state.currentClaim.status) < 0;
+        var card = document.createElement('article');
+        card.className = 'document-card' + (item.selected_for_pdf ? '' : ' not-selected');
+        card.dataset.documentId = item.document_id;
+        card.draggable = !mobileMode && !desktopLocked;
+        if (card.draggable) attachDocumentDragEvents(card);
+        var thumbnail = document.createElement('div');
+        thumbnail.className = 'document-thumbnail';
+        thumbnail.textContent = 'Memuat...';
+        var body = document.createElement('div');
+        body.className = 'document-body';
+        var order = document.createElement('div');
+        order.className = 'document-order';
+        order.textContent = mobileMode ? 'Berkas ' + (itemIndex + 1) :
+          'Urutan PDF ' + (itemIndex + 1) + (card.draggable ? ' · Geser untuk memindahkan' : '');
+        var title = document.createElement('div');
+        title.className = 'document-title';
+        title.textContent = documentTypeLabel(item.document_type);
+        var meta = document.createElement('div');
+        meta.className = 'document-meta';
+        meta.textContent = formatFileSize(item.file_size_bytes) + ' · ' + item.image_width + '×' + item.image_height;
+        body.append(order, title, meta);
+        if (!mobileMode) {
+          var selectionLabel = document.createElement('label');
+          selectionLabel.className = 'document-select';
+          var selection = document.createElement('input');
+          selection.type = 'checkbox';
+          selection.checked = Boolean(item.selected_for_pdf);
+          selection.disabled = desktopLocked;
+          var selectionText = document.createElement('span');
+          selectionText.textContent = 'Sertakan dalam PDF';
+          selection.addEventListener('change', function () {
+            updateDocumentSelectionFromBrowser(item, selection.checked, selection);
+          });
+          selectionLabel.append(selection, selectionText);
+          body.appendChild(selectionLabel);
+        }
+        var actions = document.createElement('div');
+        actions.className = 'document-actions';
+        var viewButton = document.createElement('button');
+        viewButton.type = 'button';
+        viewButton.textContent = 'Lihat';
+        viewButton.addEventListener('click', function () { previewDocument(item); });
+        var rotateButton = document.createElement('button');
+        rotateButton.type = 'button';
+        rotateButton.textContent = 'Putar 90°';
+        rotateButton.classList.toggle('hidden', mobileMode || desktopLocked);
+        rotateButton.addEventListener('click', function () { rotateUploadedDocument(item, rotateButton); });
+        var deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'danger-button';
+        deleteButton.textContent = 'Hapus';
+        deleteButton.classList.toggle('hidden', desktopLocked);
+        deleteButton.addEventListener('click', function () { deleteUploadedDocument(item, mobileMode, deleteButton); });
+        actions.append(viewButton, rotateButton, deleteButton);
+        body.appendChild(actions);
+        if (!mobileMode && !desktopLocked) {
+          var orderActions = document.createElement('div');
+          orderActions.className = 'document-order-actions';
+          var earlierButton = document.createElement('button');
+          earlierButton.type = 'button';
+          earlierButton.textContent = '← Lebih awal';
+          earlierButton.disabled = itemIndex === 0;
+          earlierButton.addEventListener('click', function () { moveDocumentByOffset(item.document_id, -1); });
+          var laterButton = document.createElement('button');
+          laterButton.type = 'button';
+          laterButton.textContent = 'Lebih akhir →';
+          laterButton.disabled = itemIndex === documents.length - 1;
+          laterButton.addEventListener('click', function () { moveDocumentByOffset(item.document_id, 1); });
+          orderActions.append(earlierButton, laterButton);
+          body.appendChild(orderActions);
+        }
+        card.append(thumbnail, body);
+        container.appendChild(card);
+        callServer('getDocumentThumbnail', [item.document_id], function (content) {
+          var image = document.createElement('img');
+          image.alt = documentTypeLabel(item.document_type);
+          image.src = 'data:' + content.mime_type + ';base64,' + content.base64;
+          thumbnail.textContent = '';
+          thumbnail.appendChild(image);
+        }, null, function () { thumbnail.textContent = 'Pratinjau tidak tersedia'; });
+      });
+    }
+
+    function updateDocumentSelectionFromBrowser(item, selected, checkbox) {
+      checkbox.disabled = true;
+      callServer('updateDocumentSelection', [item.document_id, selected], function () {
+        if (state.currentClaim) openClaimDetail(state.currentClaim.claim_id);
+        showMessage(selected ? 'Berkas disertakan dalam PDF.' : 'Berkas dikeluarkan dari PDF.', false);
+      }, null, function (message, code) {
+        checkbox.checked = !selected;
+        checkbox.disabled = false;
+        handleServerError(message, code);
+      });
+    }
+
+    function moveDocumentByOffset(documentId, offset) {
+      var currentIndex = state.documents.findIndex(function (item) { return item.document_id === documentId; });
+      var targetIndex = currentIndex + offset;
+      if (currentIndex < 0 || targetIndex < 0 || targetIndex >= state.documents.length) return;
+      var reordered = state.documents.slice();
+      var moved = reordered.splice(currentIndex, 1)[0];
+      reordered.splice(targetIndex, 0, moved);
+      persistDocumentOrder(reordered);
+    }
+
+    function attachDocumentDragEvents(card) {
+      card.addEventListener('dragstart', function (event) {
+        state.draggedDocumentId = card.dataset.documentId;
+        card.classList.add('dragging');
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', state.draggedDocumentId);
+        }
+      });
+      card.addEventListener('dragover', function (event) {
+        event.preventDefault();
+        card.classList.add('drag-target');
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      });
+      card.addEventListener('dragleave', function () { card.classList.remove('drag-target'); });
+      card.addEventListener('drop', function (event) {
+        event.preventDefault();
+        card.classList.remove('drag-target');
+        var sourceId = state.draggedDocumentId || (event.dataTransfer ? event.dataTransfer.getData('text/plain') : '');
+        var targetId = card.dataset.documentId;
+        if (!sourceId || sourceId === targetId) return;
+        var reordered = state.documents.slice();
+        var sourceIndex = reordered.findIndex(function (item) { return item.document_id === sourceId; });
+        var targetIndex = reordered.findIndex(function (item) { return item.document_id === targetId; });
+        if (sourceIndex < 0 || targetIndex < 0) return;
+        var moved = reordered.splice(sourceIndex, 1)[0];
+        reordered.splice(targetIndex, 0, moved);
+        persistDocumentOrder(reordered);
+      });
+      card.addEventListener('dragend', function () {
+        state.draggedDocumentId = '';
+        document.querySelectorAll('.document-card').forEach(function (item) {
+          item.classList.remove('dragging', 'drag-target');
+        });
+      });
+    }
+
+    function persistDocumentOrder(reordered) {
+      if (!state.currentClaim) return;
+      var previous = state.documents.slice();
+      state.documents = reordered;
+      renderDocumentGrid('document-grid', 'documents-empty', state.documents, false);
+      callServer('reorderDocuments', [state.currentClaim.claim_id, reordered.map(function (item) { return item.document_id; })], function (documents) {
+        state.documents = documents || [];
+        openClaimDetail(state.currentClaim.claim_id);
+        showMessage('Urutan berkas berhasil disimpan.', false);
+      }, null, function (message, code) {
+        state.documents = previous;
+        renderDocumentGrid('document-grid', 'documents-empty', state.documents, false);
+        handleServerError(message, code);
+      });
+    }
+
+    async function rotateUploadedDocument(item, button) {
+      button.disabled = true;
+      showMessage('Menyiapkan hasil rotasi...', false);
+      try {
+        var content = await serverPromise('getDocumentPreview', [item.document_id]);
+        var payload = await createRotatedImagePayload(item, content);
+        await serverPromise('rotateDocument', [payload]);
+        showMessage('Berkas berhasil diputar 90 derajat ke kanan.', false);
+        if (state.currentClaim) openClaimDetail(state.currentClaim.claim_id);
+      } catch (error) {
+        handleServerError(error && error.message ? error.message : 'Berkas gagal diputar.', error && error.code);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function createRotatedImagePayload(item, content) {
+      var image = await loadBrowserImage('data:' + content.mime_type + ';base64,' + content.base64);
+      var rotatedCanvas = document.createElement('canvas');
+      rotatedCanvas.width = image.naturalHeight;
+      rotatedCanvas.height = image.naturalWidth;
+      var context = rotatedCanvas.getContext('2d');
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, rotatedCanvas.width, rotatedCanvas.height);
+      context.translate(rotatedCanvas.width / 2, rotatedCanvas.height / 2);
+      context.rotate(Math.PI / 2);
+      context.drawImage(image, -image.naturalWidth / 2, -image.naturalHeight / 2);
+      var isUsg = item && item.document_type === 'USG';
+      var dimensions = isUsg
+        ? { width: rotatedCanvas.width, height: rotatedCanvas.height }
+        : mobileHdDimensions(rotatedCanvas.width, rotatedCanvas.height);
+      var canvas = dimensions.width === rotatedCanvas.width && dimensions.height === rotatedCanvas.height
+        ? rotatedCanvas
+        : drawImageToCanvas(rotatedCanvas, dimensions);
+      var blob = await canvasToBlob(canvas, 0.90);
+      if (blob.size > 6 * 1024 * 1024) blob = await canvasToBlob(canvas, 0.78);
+      if (blob.size > 6 * 1024 * 1024) throw new Error('Hasil rotasi terlalu besar untuk disimpan.');
+      var thumbnailDimensions = scaledDimensions(canvas.width, canvas.height, 400);
+      var thumbnailCanvas = drawImageToCanvas(canvas, thumbnailDimensions);
+      var thumbnailBlob = await canvasToBlob(thumbnailCanvas, 0.76);
+      return {
+        document_id: item.document_id,
+        mime_type: 'image/jpeg',
+        base64: await blobToBase64(blob),
+        width: canvas.width,
+        height: canvas.height,
+        thumbnail_base64: await blobToBase64(thumbnailBlob),
+        thumbnail_width: thumbnailDimensions.width,
+        thumbnail_height: thumbnailDimensions.height
+      };
+    }
+
+    function loadPdfPreparation(claimId) {
+      callServer('getPdfPreparation', [claimId], function (preparation) {
+        state.pdfPreparation = preparation;
+        renderPdfPreparation(preparation);
+      }, null, function (message, code) {
+        state.pdfPreparation = null;
+        renderPdfPreparationError(message);
+        if (['IDENTITY_UNAVAILABLE', 'SESSION_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED'].indexOf(code) >= 0) {
+          handleServerError(message, code);
+        }
+      });
+    }
+
+    function renderPdfPreparation(preparation) {
+      var badge = document.getElementById('pdf-readiness-badge');
+      badge.className = 'status ' + (preparation.ready ? 'ready' : 'collecting');
+      badge.textContent = preparation.ready ? 'Siap dibuat PDF' : 'Belum lengkap';
+      var list = document.getElementById('pdf-readiness-list');
+      list.textContent = '';
+      if (preparation.ready) {
+        var readyItem = document.createElement('li');
+        readyItem.className = 'ok';
+        readyItem.textContent = 'OK - ' + preparation.total_selected + ' berkas terpilih siap dibuat menjadi PDF.';
+        list.appendChild(readyItem);
+      } else {
+        preparation.issues.forEach(function (issue) {
+          var item = document.createElement('li');
+          item.className = 'fail';
+          item.textContent = 'Perlu diperbaiki - ' + issue;
+          list.appendChild(item);
+        });
+      }
+      var currentFile = document.getElementById('pdf-current-file');
+      currentFile.classList.toggle('hidden', !preparation.has_pdf);
+      if (preparation.has_pdf) {
+        document.getElementById('pdf-current-filename').textContent = preparation.final_pdf_filename || 'PDF klaim';
+        document.getElementById('pdf-current-meta').textContent = 'Versi ' + preparation.pdf_version + ' - dibuat ' +
+          formatIndonesianDateTime(preparation.final_pdf_generated_at) +
+          (preparation.status === 'PDF_GENERATED' || preparation.status === 'COMPLETED' ? '' : ' - perlu dibuat ulang setelah perubahan berkas');
+      }
+      var mayGenerate = preparation.can_generate_pdf && preparation.ready &&
+        ['COLLECTING_DOCUMENTS', 'READY', 'PDF_GENERATED'].indexOf(preparation.status) >= 0;
+      var generateButton = document.getElementById('generate-pdf-button');
+      generateButton.classList.toggle('hidden', !mayGenerate);
+      generateButton.textContent = preparation.has_pdf ? 'Buat Ulang PDF' : 'Buat PDF';
+      document.getElementById('preview-pdf-button').classList.toggle('hidden', !preparation.has_pdf);
+      document.getElementById('download-pdf-button').classList.toggle('hidden', !preparation.has_pdf || !preparation.can_download_pdf);
+      document.getElementById('complete-claim-button').classList.toggle('hidden',
+        !preparation.can_generate_pdf || preparation.status !== 'PDF_GENERATED');
+      document.getElementById('reopen-claim-button').classList.toggle('hidden',
+        !(state.bootstrap && state.bootstrap.user.role === 'ADMIN' && preparation.status === 'COMPLETED'));
+    }
+
+    function renderPdfPreparationError(message) {
+      var badge = document.getElementById('pdf-readiness-badge');
+      badge.className = 'status off';
+      badge.textContent = 'Pemeriksaan gagal';
+      var list = document.getElementById('pdf-readiness-list');
+      list.textContent = '';
+      var item = document.createElement('li');
+      item.className = 'fail';
+      item.textContent = message || 'Kesiapan PDF tidak dapat diperiksa.';
+      list.appendChild(item);
+      ['generate-pdf-button', 'preview-pdf-button', 'download-pdf-button', 'complete-claim-button', 'reopen-claim-button']
+        .forEach(function (id) { document.getElementById(id).classList.add('hidden'); });
+    }
+
+    function openPdfConfirmation() {
+      var preparation = state.pdfPreparation;
+      if (!preparation || !preparation.ready) {
+        showMessage('Lengkapi dan pilih berkas sebelum membuat PDF.', true);
+        return;
+      }
+      var form = document.getElementById('pdf-confirm-form');
+      form.reset();
+      document.getElementById('pdf-confirm-patient').textContent = state.currentClaim.patient_name;
+      document.getElementById('pdf-confirm-nik').textContent = state.currentClaim.patient_nik;
+      document.getElementById('pdf-confirm-date').textContent = formatIndonesianDate(preparation.examination_date);
+      var counts = document.getElementById('pdf-confirm-counts');
+      counts.textContent = '';
+      [
+        ['Gambar USG', preparation.counts.USG],
+        ['KTP (Identitas)', preparation.counts.KTP],
+        ['Buku KIA', preparation.counts.BUKU_KIA],
+        ['SPP & FKPP BPJS', preparation.counts.SPP_FKPP_BPJS],
+        ['Berkas Lainnya', preparation.counts.OTHER],
+        ['Total', preparation.total_selected]
+      ].forEach(function (pair) {
+        var item = document.createElement('div');
+        item.className = 'confirmation-count';
+        var label = document.createElement('span'); label.textContent = pair[0];
+        var value = document.createElement('strong'); value.textContent = pair[1];
+        item.append(label, value);
+        counts.appendChild(item);
+      });
+      document.getElementById('pdf-confirm-dialog').showModal();
+    }
+
+    function generatePdf(event) {
+      event.preventDefault();
+      if (!state.currentClaim) return;
+      var form = event.currentTarget;
+      if (!form.elements.confirmed_same_patient.checked) {
+        showMessage('Centang konfirmasi pasien sebelum membuat PDF.', true);
+        return;
+      }
+      var button = document.getElementById('confirm-generate-pdf-button');
+      var progress = document.getElementById('pdf-progress');
+      document.getElementById('pdf-confirm-dialog').close();
+      progress.classList.remove('hidden', 'error');
+      progress.textContent = 'Menyusun dan membuat PDF. Proses ini dapat memerlukan beberapa saat...';
+      callServer('generateClaimPdf', [{
+        claim_id: state.currentClaim.claim_id,
+        confirmed_same_patient: true
+      }], function (data) {
+        progress.textContent = data.filename + ' berhasil dibuat (' + formatFileSize(data.file_size_bytes) + ').';
+        state.currentClaim = data.claim;
+        renderClaimDetail(data.claim);
+        showMessage('PDF klaim berhasil dibuat.', false);
+      }, button, function (message, code) {
+        progress.classList.add('error');
+        progress.textContent = message;
+        handleServerError(message, code);
+      });
+    }
+
+    function pdfBlobFromContent(content) {
+      var binary = window.atob(content.base64);
+      var bytes = new Uint8Array(binary.length);
+      for (var index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return new Blob([bytes], { type: content.mime_type || 'application/pdf' });
+    }
+
+    function previewFinalPdf() {
+      if (!state.currentClaim) return;
+      var dialog = document.getElementById('pdf-preview-dialog');
+      var frame = document.getElementById('pdf-preview-frame');
+      frame.classList.add('hidden');
+      frame.removeAttribute('src');
+      document.getElementById('pdf-preview-loading').textContent = 'Memuat PDF...';
+      document.getElementById('pdf-preview-loading').classList.remove('hidden');
+      dialog.showModal();
+      callServer('getFinalPdfForPreview', [state.currentClaim.claim_id], function (content) {
+        closePdfObjectUrl();
+        state.pdfObjectUrl = URL.createObjectURL(pdfBlobFromContent(content));
+        document.getElementById('pdf-preview-title').textContent = content.filename;
+        frame.src = state.pdfObjectUrl;
+        frame.classList.remove('hidden');
+        document.getElementById('pdf-preview-loading').classList.add('hidden');
+      }, null, function (message, code) {
+        document.getElementById('pdf-preview-loading').textContent = message;
+        if (['IDENTITY_UNAVAILABLE', 'SESSION_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED'].indexOf(code) >= 0) {
+          dialog.close();
+          handleServerError(message, code);
+        }
+      });
+    }
+
+    function closePdfObjectUrl() {
+      if (state.pdfObjectUrl) URL.revokeObjectURL(state.pdfObjectUrl);
+      state.pdfObjectUrl = '';
+    }
+
+    function closePdfPreview() {
+      document.getElementById('pdf-preview-dialog').close();
+      document.getElementById('pdf-preview-frame').removeAttribute('src');
+      closePdfObjectUrl();
+    }
+
+    function downloadFinalPdfFromBrowser() {
+      if (!state.currentClaim) return;
+      var button = document.getElementById('download-pdf-button');
+      callServer('downloadFinalPdf', [state.currentClaim.claim_id], function (content) {
+        var objectUrl = URL.createObjectURL(pdfBlobFromContent(content));
+        var link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = content.filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 1000);
+        showMessage('Unduhan PDF dimulai.', false);
+      }, button);
+    }
+
+    function completeCurrentClaim() {
+      if (!state.currentClaim || !window.confirm('Selesaikan klaim ini? Unggahan dan perubahan berkas akan dikunci.')) return;
+      var button = document.getElementById('complete-claim-button');
+      callServer('completeClaim', [state.currentClaim.claim_id], function (claim) {
+        state.currentClaim = claim;
+        renderClaimDetail(claim);
+        showMessage('Klaim berhasil diselesaikan.', false);
+      }, button);
+    }
+
+    function reopenCurrentClaim() {
+      if (!state.currentClaim || !window.confirm('Buka kembali klaim ini untuk diperbaiki? PDF harus dibuat ulang setelah berkas berubah.')) return;
+      var button = document.getElementById('reopen-claim-button');
+      callServer('reopenClaim', [state.currentClaim.claim_id], function (claim) {
+        state.currentClaim = claim;
+        renderClaimDetail(claim);
+        showMessage('Klaim dibuka kembali.', false);
+      }, button);
+    }
+
+    function previewDocument(item) {
+      var dialog = document.getElementById('preview-dialog');
+      var image = document.getElementById('preview-image');
+      image.classList.add('hidden');
+      image.removeAttribute('src');
+      document.getElementById('preview-loading').classList.remove('hidden');
+      document.getElementById('preview-title').textContent = documentTypeLabel(item.document_type);
+      dialog.showModal();
+      callServer('getDocumentPreview', [item.document_id], function (content) {
+        image.src = 'data:' + content.mime_type + ';base64,' + content.base64;
+        image.classList.remove('hidden');
+        document.getElementById('preview-loading').classList.add('hidden');
+      }, null, function (message) {
+        document.getElementById('preview-loading').textContent = message;
+      });
+    }
+
+    function deleteUploadedDocument(item, mobileMode, button) {
+      if (!window.confirm('Hapus ' + documentTypeLabel(item.document_type) + ' ini? Riwayat penghapusan tetap disimpan.')) return;
+      var endpoint = mobileMode ? 'deleteMobileDocument' : 'deleteDocument';
+      var args = mobileMode ? [initialMobileToken, item.document_id] : [item.document_id];
+      callServer(endpoint, args, function () {
+        showMessage('Berkas berhasil dihapus.', false);
+        if (mobileMode) loadMobileDocuments();
+        else if (state.currentClaim) openClaimDetail(state.currentClaim.claim_id);
+      }, button);
+    }
+
+    function readFileAsDataUrl(file) {
+      return new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onload = function () { resolve(reader.result); };
+        reader.onerror = function () { reject(new Error('Berkas tidak dapat dibaca.')); };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function loadBrowserImage(dataUrl) {
+      return new Promise(function (resolve, reject) {
+        var image = new Image();
+        image.onload = function () { resolve(image); };
+        image.onerror = function () { reject(new Error('Gambar tidak dapat dibuka. Pilih gambar JPEG atau PNG lain.')); };
+        image.src = dataUrl;
+      });
+    }
+
+    function canvasToBlob(canvas, quality) {
+      return new Promise(function (resolve, reject) {
+        canvas.toBlob(function (blob) {
+          if (blob) resolve(blob);
+          else reject(new Error('Gambar gagal dioptimalkan.'));
+        }, 'image/jpeg', quality);
+      });
+    }
+
+    function blobToBase64(blob) {
+      return readFileAsDataUrl(blob).then(function (dataUrl) { return String(dataUrl).split(',')[1] || ''; });
+    }
+
+    function scaledDimensions(width, height, maximum) {
+      var scale = Math.min(1, maximum / Math.max(width, height));
+      return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+    }
+
+    function mobileHdDimensions(width, height) {
+      var landscape = width >= height;
+      var maximumWidth = landscape ? 1280 : 720;
+      var maximumHeight = landscape ? 720 : 1280;
+      var scale = Math.min(1, maximumWidth / width, maximumHeight / height);
+      return {
+        width: Math.max(1, Math.round(width * scale)),
+        height: Math.max(1, Math.round(height * scale))
+      };
+    }
+
+    function drawImageToCanvas(image, dimensions) {
+      var canvas = document.createElement('canvas');
+      canvas.width = dimensions.width;
+      canvas.height = dimensions.height;
+      var context = canvas.getContext('2d');
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    }
+
+    async function optimizeImage(file, documentType) {
+      if (['image/jpeg', 'image/png'].indexOf(file.type) < 0) throw new Error('Hanya gambar JPEG atau PNG yang dapat diunggah.');
+      if (file.size > 25 * 1024 * 1024) throw new Error('Ukuran gambar asli melebihi 25 MB.');
+      var image = await loadBrowserImage(await readFileAsDataUrl(file));
+      var quality = documentType === 'USG' ? 0.90 : 0.82;
+      var dimensions = documentType === 'USG'
+        ? scaledDimensions(image.naturalWidth, image.naturalHeight, 2800)
+        : mobileHdDimensions(image.naturalWidth, image.naturalHeight);
+      var canvas = drawImageToCanvas(image, dimensions);
+      var blob = await canvasToBlob(canvas, quality);
+      if (blob.size > 6 * 1024 * 1024) blob = await canvasToBlob(canvas, 0.78);
+      if (blob.size > 6 * 1024 * 1024) throw new Error('Gambar masih lebih dari 6 MB setelah dioptimalkan. Gunakan gambar berukuran lebih kecil.');
+      var thumbnailDimensions = scaledDimensions(dimensions.width, dimensions.height, 400);
+      var thumbnailCanvas = drawImageToCanvas(canvas, thumbnailDimensions);
+      var thumbnailBlob = await canvasToBlob(thumbnailCanvas, 0.76);
+      return {
+        document_type: documentType,
+        original_filename: file.name || 'gambar.jpg',
+        mime_type: 'image/jpeg',
+        base64: await blobToBase64(blob),
+        width: dimensions.width,
+        height: dimensions.height,
+        thumbnail_base64: await blobToBase64(thumbnailBlob),
+        thumbnail_width: thumbnailDimensions.width,
+        thumbnail_height: thumbnailDimensions.height
+      };
+    }
+
+    async function uploadPcImages() {
+      if (!state.currentClaim) return;
+      var input = document.getElementById('pc-usg-input');
+      var files = Array.prototype.slice.call(input.files || []);
+      if (!files.length) return;
+      var button = document.getElementById('pc-upload-button');
+      var progress = document.getElementById('pc-upload-progress');
+      button.disabled = true;
+      progress.classList.remove('hidden', 'error');
+      var uploadedCount = 0;
+      try {
+        for (var i = 0; i < files.length; i += 1) {
+          progress.textContent = 'Mengoptimalkan dan mengunggah gambar ' + (i + 1) + ' dari ' + files.length + '...';
+          var payload = await optimizeImage(files[i], 'USG');
+          payload.claim_id = state.currentClaim.claim_id;
+          await serverPromise('uploadDocument', [payload]);
+          uploadedCount += 1;
+        }
+        progress.textContent = files.length + ' gambar USG berhasil diunggah.';
+        showMessage('Gambar USG berhasil diunggah.', false);
+        openClaimDetail(state.currentClaim.claim_id);
+      } catch (error) {
+        progress.classList.add('error');
+        progress.textContent = (uploadedCount ? uploadedCount + ' gambar berhasil. ' : '') +
+          (error && error.message ? error.message : 'Unggah gambar gagal.');
+        if (uploadedCount && state.currentClaim) loadDocuments(state.currentClaim.claim_id);
+      } finally {
+        input.value = '';
+        updatePcSelection();
+        button.disabled = !(input.files && input.files.length);
+      }
+    }
+
+    async function uploadClaimSupportingImage(input) {
+      if (!state.currentClaim) return;
+      var file = input.files && input.files[0];
+      if (!file) return;
+      var type = input.dataset.claimDocumentType;
+      var progress = document.getElementById('claim-document-upload-progress');
+      document.querySelectorAll('[data-claim-document-type]').forEach(function (element) { element.disabled = true; });
+      progress.classList.remove('hidden', 'error');
+      progress.textContent = 'Mengoptimalkan dan mengunggah ' + documentTypeLabel(type) + '...';
+      try {
+        var payload = await optimizeImage(file, type);
+        payload.claim_id = state.currentClaim.claim_id;
+        await serverPromise('uploadDocument', [payload]);
+        progress.textContent = '✓ ' + documentTypeLabel(type) + ' berhasil diunggah.';
+        openClaimDetail(state.currentClaim.claim_id);
+      } catch (error) {
+        progress.classList.add('error');
+        progress.textContent = error && error.message ? error.message : 'Berkas gagal diunggah.';
+      } finally {
+        input.value = '';
+        document.querySelectorAll('[data-claim-document-type]').forEach(function (element) { element.disabled = false; });
+      }
+    }
+
+    function updatePcSelection() {
+      var input = document.getElementById('pc-usg-input');
+      var files = Array.prototype.slice.call(input.files || []);
+      document.getElementById('pc-selected-files').textContent = files.length
+        ? files.length + ' gambar dipilih: ' + files.map(function (file) { return file.name; }).join(', ')
+        : 'Belum ada gambar dipilih.';
+      document.getElementById('pc-upload-button').disabled = files.length === 0;
+    }
+
+    function createMobileToken() {
+      if (!state.currentClaim) return;
+      var button = document.getElementById('create-mobile-token-button');
+      callServer('createMobileUploadToken', [state.currentClaim.claim_id], function (data) {
+        state.mobileUploadUrl = data.upload_url;
+        document.getElementById('mobile-upload-link').value = data.upload_url;
+        document.getElementById('mobile-token-status').textContent = 'Tautan aktif sampai ' + formatIndonesianDateTime(data.expires_at) + '.';
+        var qrContainer = document.getElementById('mobile-qr-code');
+        qrContainer.textContent = '';
+        try {
+          var qr = qrcode(0, 'M');
+          qr.addData(data.upload_url);
+          qr.make();
+          qrContainer.innerHTML = qr.createSvgTag(4, 4);
+        } catch (error) {
+          qrContainer.textContent = 'QR gagal dibuat. Gunakan tombol Salin Tautan.';
+        }
+        document.getElementById('mobile-link-panel').classList.remove('hidden');
+        button.textContent = 'Buat QR Baru';
+      }, button);
+    }
+
+    function copyMobileLink() {
+      var input = document.getElementById('mobile-upload-link');
+      if (!input.value) return;
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(input.value).then(function () { showMessage('Tautan berhasil disalin.', false); });
+      } else {
+        input.focus();
+        input.select();
+        document.execCommand('copy');
+        showMessage('Tautan berhasil disalin.', false);
+      }
+    }
+
+    function initializeMobileUpload() {
+      showView('mobile');
+      var message = document.getElementById('mobile-context-message');
+      if (!initialMobileToken) {
+        message.textContent = 'Tautan unggah tidak valid. Minta staf komputer membuat QR baru.';
+        return;
+      }
+      callServer('getMobileUploadContext', [initialMobileToken], function (context) {
+        state.mobileContext = context;
+        message.textContent = 'Periksa data berikut sebelum membuka kamera.';
+        document.getElementById('mobile-patient-name').textContent = context.patient_name_masked;
+        document.getElementById('mobile-examination-date').textContent = formatIndonesianDate(context.examination_date);
+        document.getElementById('mobile-facility-name').textContent = context.facility_name;
+        document.getElementById('mobile-upload-patient').textContent = context.patient_name_masked;
+        document.getElementById('mobile-patient-summary').classList.remove('hidden');
+        document.getElementById('mobile-patient-warning').classList.remove('hidden');
+        document.getElementById('confirm-mobile-patient-button').classList.remove('hidden');
+      }, null, function (errorMessage, code) {
+        message.textContent = errorMessage;
+        if (['IDENTITY_UNAVAILABLE', 'SESSION_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED'].indexOf(code) >= 0) handleServerError(errorMessage, code);
+      });
+    }
+
+    function confirmMobilePatient() {
+      if (!state.mobileContext) return;
+      document.getElementById('mobile-confirmation').classList.add('hidden');
+      document.getElementById('mobile-uploader').classList.remove('hidden');
+      loadMobileDocuments();
+    }
+
+    function loadMobileDocuments() {
+      callServer('listMobileDocuments', [initialMobileToken], function (documents) {
+        renderDocumentGrid('mobile-document-grid', 'mobile-documents-empty', documents || [], true);
+      });
+    }
+
+    async function uploadMobileImage(input) {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      var type = input.dataset.mobileType;
+      var progress = document.getElementById('mobile-upload-progress');
+      document.querySelectorAll('[data-mobile-type]').forEach(function (element) { element.disabled = true; });
+      progress.classList.remove('hidden', 'error');
+      progress.textContent = 'Mengoptimalkan dan mengunggah ' + documentTypeLabel(type) + '...';
+      try {
+        var payload = await optimizeImage(file, type);
+        await serverPromise('uploadMobileDocument', [initialMobileToken, payload]);
+        progress.textContent = '✓ Foto berhasil diunggah.';
+        input.value = '';
+        loadMobileDocuments();
+      } catch (error) {
+        progress.classList.add('error');
+        progress.textContent = error && error.message ? error.message : 'Foto gagal diunggah.';
+      } finally {
+        input.value = '';
+        document.querySelectorAll('[data-mobile-type]').forEach(function (element) { element.disabled = false; });
+      }
+    }
+
+    function finishMobileUpload() {
+      var button = document.getElementById('finish-mobile-upload-button');
+      callServer('finishMobileUpload', [initialMobileToken], function () {
+        document.getElementById('mobile-uploader').classList.add('hidden');
+        document.getElementById('mobile-confirmation').classList.remove('hidden');
+        document.getElementById('mobile-confirmation').innerHTML = '<div class="mobile-icon">✓</div><h1>Unggah Selesai</h1><p>Foto sudah tersimpan. Anda dapat menutup halaman ini.</p>';
+        if (window.history && window.history.replaceState) window.history.replaceState({}, document.title, window.location.pathname);
+      }, button);
+    }
+
+    function loadUsers() {
+      callServer('listUsersAdmin', [], function (users) { state.users = users; renderUsers(); });
+      callServer('listFacilitiesAdmin', [], function (facilities) {
+        state.facilities = facilities.filter(function (facility) { return facility.active; });
+        populateFacilities();
+      });
+    }
+
+    function renderUsers() {
+      var body = document.getElementById('users-body');
+      body.textContent = '';
+      state.users.forEach(function (user) {
+        var row = document.createElement('tr');
+        [user.full_name, user.auth_username || 'Belum dibuat', user.google_email, user.role === 'ADMIN' ? 'Administrator' : 'Staf', user.facility_id].forEach(function (value) {
+          var cell = document.createElement('td'); cell.textContent = value || '—'; row.appendChild(cell);
+        });
+        var statusCell = document.createElement('td');
+        var status = document.createElement('span'); status.className = 'status' + (user.active ? '' : ' off'); status.textContent = user.active ? (user.must_change_password ? 'Ganti sandi' : 'Aktif') : 'Nonaktif'; statusCell.appendChild(status); row.appendChild(statusCell);
+        var actionCell = document.createElement('td'); actionCell.className = 'action-buttons';
+        var edit = document.createElement('button'); edit.type = 'button'; edit.textContent = 'Edit'; edit.addEventListener('click', function () { openUserDialog(user); }); actionCell.appendChild(edit);
+        if (!state.bootstrap || user.user_id !== state.bootstrap.user.user_id) {
+          var remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger-button'; remove.textContent = 'Hapus'; remove.addEventListener('click', function () { deleteUser(user, remove); }); actionCell.appendChild(remove);
+        }
+        row.appendChild(actionCell);
+        body.appendChild(row);
+      });
+    }
+
+    function populateFacilities(selected) {
+      var select = document.querySelector('#user-form [name="facility_id"]');
+      select.textContent = '';
+      state.facilities.forEach(function (facility) {
+        var option = document.createElement('option'); option.value = facility.facility_id; option.textContent = facility.facility_name + ' (' + facility.facility_id + ')'; option.selected = selected === facility.facility_id; select.appendChild(option);
+      });
+    }
+
+    function openUserDialog(user) {
+      var form = document.getElementById('user-form');
+      form.reset();
+      var value = user || { role: 'STAFF', active: true, can_create_claim: true, can_generate_pdf: true, can_download_pdf: true };
+      ['user_id', 'google_email', 'full_name', 'role'].forEach(function (name) { form.elements[name].value = value[name] || ''; });
+      form.elements.google_email.readOnly = Boolean(user);
+      form.elements.username.value = value.auth_username || '';
+      form.elements.username.readOnly = Boolean(value.auth_username);
+      form.elements.password.value = '';
+      form.elements.password_confirmation.value = '';
+      form.elements.password.required = false;
+      form.elements.password_confirmation.required = false;
+      document.getElementById('password-help').textContent = value.has_password
+        ? 'Kosongkan jika tidak ingin reset. Jika diisi, pengguna wajib menggantinya saat login.'
+        : 'Kosongkan untuk memakai kata sandi awal admin123. Pengguna wajib menggantinya saat login.';
+      ['active', 'can_create_claim', 'can_view_all_claims', 'can_generate_pdf', 'can_download_pdf'].forEach(function (name) { form.elements[name].checked = Boolean(value[name]); });
+      populateFacilities(value.facility_id);
+      document.getElementById('user-dialog-title').textContent = user ? 'Edit Pengguna' : 'Tambah Pengguna';
+      document.getElementById('user-dialog').showModal();
+    }
+
+    function saveUser(event) {
+      event.preventDefault();
+      var form = event.currentTarget;
+      var payload = {
+        user_id: form.elements.user_id.value,
+        username: form.elements.username.value,
+        password: form.elements.password.value,
+        password_confirmation: form.elements.password_confirmation.value,
+        google_email: form.elements.google_email.value,
+        full_name: form.elements.full_name.value,
+        role: form.elements.role.value,
+        facility_id: form.elements.facility_id.value,
+        active: form.elements.active.checked,
+        can_create_claim: form.elements.can_create_claim.checked,
+        can_view_all_claims: form.elements.can_view_all_claims.checked,
+        can_generate_pdf: form.elements.can_generate_pdf.checked,
+        can_download_pdf: form.elements.can_download_pdf.checked
+      };
+      callServer('saveUserAdmin', [payload], function () {
+        document.getElementById('user-dialog').close();
+        showMessage('Pengguna berhasil disimpan.', false);
+        loadUsers();
+      }, document.getElementById('save-user-button'));
+    }
+
+    function deleteUser(user, button) {
+      var label = user.full_name || user.auth_username || user.google_email;
+      var confirmed = window.confirm(
+        'Hapus pengguna "' + label + '" secara permanen?\n\n' +
+        'Nama pengguna, kredensial, dan semua sesi masuk akan dihapus. Tindakan ini tidak dapat dibatalkan.'
+      );
+      if (!confirmed) return;
+      callServer('deleteUserAdmin', [user.user_id], function () {
+        showMessage('Pengguna berhasil dihapus.', false);
+        loadUsers();
+      }, button);
+    }
+
+    function loadOrthancBridgeStatus() {
+      if (!state.bootstrap || state.bootstrap.user.role !== 'ADMIN') return;
+      callServer('getOrthancBridgeStatus', [], function (status) {
+        state.orthancBridgeStatus = status;
+        renderOrthancBridgeStatus(status);
+      });
+    }
+
+    function renderOrthancBridgeStatus(status) {
+      var ready = status.enabled && status.key_configured;
+      var badge = document.getElementById('orthanc-bridge-badge');
+      badge.className = 'status ' + (ready ? 'ready' : 'off');
+      badge.textContent = ready ? 'Aktif' : (status.key_configured ? 'Dinonaktifkan' : 'Belum dipasangkan');
+      document.getElementById('orthanc-bridge-id').value = status.bridge_id || '-';
+      document.getElementById('orthanc-bridge-endpoint').value = status.endpoint_url || 'Tersedia setelah web app dideploy';
+      document.getElementById('orthanc-bridge-last-seen').textContent = status.last_received_at
+        ? 'Data terakhir diterima ' + formatIndonesianDateTime(status.last_received_at) + '.'
+        : 'Belum ada pemeriksaan yang diterima dari bridge.';
+      var counts = document.getElementById('orthanc-bridge-counts'); counts.textContent = '';
+      [['Siap ditinjau', status.counts.READY || 0], ['Sedang diterima', status.counts.RECEIVING || 0], ['Sudah diimpor', status.counts.IMPORTED || 0], ['Gagal', status.counts.ERROR || 0]]
+        .forEach(function (pair) {
+          var item = document.createElement('span'); item.className = 'document-count'; item.textContent = pair[0] + ': ' + pair[1]; counts.appendChild(item);
+        });
+      var toggle = document.getElementById('toggle-orthanc-bridge-button');
+      toggle.textContent = status.enabled ? 'Nonaktifkan Bridge' : 'Aktifkan Bridge';
+      toggle.disabled = !status.key_configured;
+      document.getElementById('rotate-orthanc-key-button').textContent = status.key_configured ? 'Ganti Kunci Koneksi' : 'Buat Kunci Koneksi';
+      document.getElementById('orthanc-nav-button').classList.toggle('hidden', !ready || !state.bootstrap.user.can_create_claim);
+      state.bootstrap.features.orthanc_bridge = ready;
+    }
+
+    function rotateOrthancKey() {
+      var status = state.orthancBridgeStatus;
+      if (status && status.key_configured && !window.confirm('Ganti kunci koneksi? OrthancBridge akan berhenti sampai config.json diperbarui dengan kunci baru.')) return;
+      var button = document.getElementById('rotate-orthanc-key-button');
+      callServer('rotateOrthancBridgeKey', [], function (data) {
+        document.getElementById('orthanc-key-bridge-id').value = data.bridge_id;
+        document.getElementById('orthanc-key-endpoint').value = data.endpoint_url;
+        document.getElementById('orthanc-key-value').value = data.bridge_key;
+        document.getElementById('orthanc-key-dialog').showModal();
+        loadOrthancBridgeStatus();
+      }, button);
+    }
+
+    function toggleOrthancBridge() {
+      var status = state.orthancBridgeStatus;
+      if (!status || !status.key_configured) return;
+      var enabled = !status.enabled;
+      if (!enabled && !window.confirm('Nonaktifkan penerimaan dari OrthancBridge? Data yang sudah diterima tidak akan dihapus.')) return;
+      var button = document.getElementById('toggle-orthanc-bridge-button');
+      callServer('setOrthancBridgeEnabled', [enabled], function () {
+        showMessage(enabled ? 'OrthancBridge diaktifkan.' : 'OrthancBridge dinonaktifkan.', false);
+        loadOrthancBridgeStatus();
+      }, button);
+    }
+
+    function copyOrthancConfiguration() {
+      var configuration = {
+        orthanc_url: 'http://127.0.0.1:8042',
+        orthanc_username: 'orthanc_bridge',
+        orthanc_password: 'GANTI_DENGAN_KATA_SANDI_ORTHANC',
+        apps_script_url: document.getElementById('orthanc-key-endpoint').value,
+        bridge_id: document.getElementById('orthanc-key-bridge-id').value,
+        bridge_key: document.getElementById('orthanc-key-value').value,
+        lookback_days: 2,
+        poll_seconds: 60,
+        max_images_per_study: 30,
+        max_frames_per_instance: 1,
+        verify_tls: true
+      };
+      var text = JSON.stringify(configuration, null, 2);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { showMessage('Konfigurasi bridge berhasil disalin.', false); });
+      } else {
+        window.prompt('Salin konfigurasi berikut:', text);
+      }
+    }
+
+    function runDiagnostics() {
+      var button = document.getElementById('diagnostics-button');
+      callServer('runSystemDiagnostics', [], function (data) {
+        var summary = document.getElementById('system-summary'); summary.textContent = '';
+        [['Versi', data.appVersion], ['Metode masuk', data.authMode === 'USERNAME_PASSWORD' ? 'Nama pengguna dan kata sandi' : data.authMode], ['Zona waktu', data.timezone], ['Pengguna aktif', data.currentUser]].forEach(function (pair) {
+          var card = document.createElement('article'); card.className = 'card'; var title = document.createElement('div'); title.className = 'muted'; title.textContent = pair[0]; var value = document.createElement('strong'); value.textContent = pair[1]; card.append(title, value); summary.appendChild(card);
+        });
+        var list = document.getElementById('diagnostics-list'); list.textContent = '';
+        data.checks.forEach(function (check) { var item = document.createElement('li'); item.className = check.ok ? 'ok' : 'fail'; item.textContent = (check.ok ? '✓ ' : '✕ ') + check.name + ' — ' + check.message; list.appendChild(item); });
+      }, button);
+    }
+
+    function logout() {
+      var button = document.getElementById('logout-button');
+      callServer('logoutPasswordSession', [], function () {
+        clearSession();
+        showLogin('Anda sudah keluar.');
+      }, button, function () {
+        clearSession();
+        showLogin('Sesi lokal sudah dihapus.');
+      });
+    }
+
+    function login(event) {
+      event.preventDefault();
+      var form = event.currentTarget;
+      var button = document.getElementById('login-button');
+      var error = document.getElementById('login-message');
+      error.classList.add('hidden');
+      callPublicServer('loginWithPassword', [form.elements.username.value, form.elements.password.value], function (data) {
+        form.elements.password.value = '';
+        state.sessionToken = data.sessionToken;
+        storeSessionToken(state.sessionToken);
+        callServer('getAppBootstrap', [], initialize, button, function (message) { showLogin(message); });
+      }, button, function (message) {
+        form.elements.password.value = '';
+        showLogin(message);
+      });
+    }
+
+    function changePassword(event) {
+      event.preventDefault();
+      var form = event.currentTarget;
+      var button = document.getElementById('password-change-button');
+      var error = document.getElementById('password-change-message');
+      error.classList.add('hidden');
+      callServer('changeOwnPassword', [form.elements.new_password.value, form.elements.password_confirmation.value], function (data) {
+        form.reset();
+        state.sessionToken = data.sessionToken;
+        storeSessionToken(state.sessionToken);
+        callServer('getAppBootstrap', [], initialize, button, function (message) { showLogin(message); });
+      }, button, function (message, code) {
+        form.elements.new_password.value = '';
+        form.elements.password_confirmation.value = '';
+        if (['SESSION_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED'].indexOf(code) >= 0) {
+          clearSession();
+          showLogin(message);
+          return;
+        }
+        showPasswordChange(message);
+      });
+    }
+
+    document.querySelectorAll('[data-view]').forEach(function (button) { button.addEventListener('click', function () { showView(button.dataset.view); }); });
+    document.getElementById('new-claim-button').addEventListener('click', function () { openClaimDialog(null); });
+    document.getElementById('refresh-orthanc-button').addEventListener('click', loadOrthancInbox);
+    document.getElementById('orthanc-include-processed').addEventListener('change', loadOrthancInbox);
+    document.getElementById('orthanc-import-form').addEventListener('submit', importOrthancClaim);
+    document.getElementById('reject-orthanc-button').addEventListener('click', rejectCurrentOrthancInbox);
+    document.getElementById('close-orthanc-dialog').addEventListener('click', function () { document.getElementById('orthanc-import-dialog').close(); });
+    document.getElementById('cancel-orthanc-button').addEventListener('click', function () { document.getElementById('orthanc-import-dialog').close(); });
+    document.getElementById('back-to-claims').addEventListener('click', function () { showView('dashboard'); });
+    document.getElementById('edit-claim-button').addEventListener('click', function () { if (state.currentClaim) openClaimDialog(state.currentClaim); });
+    document.getElementById('start-collection-button').addEventListener('click', startClaimCollection);
+    document.getElementById('archive-claim-button').addEventListener('click', archiveCurrentClaim);
+    document.getElementById('pc-usg-input').addEventListener('change', updatePcSelection);
+    document.getElementById('pc-upload-button').addEventListener('click', uploadPcImages);
+    document.querySelectorAll('[data-claim-document-type]').forEach(function (input) {
+      input.addEventListener('change', function () { uploadClaimSupportingImage(input); });
+    });
+    document.getElementById('create-mobile-token-button').addEventListener('click', createMobileToken);
+    document.getElementById('copy-mobile-link-button').addEventListener('click', copyMobileLink);
+    document.getElementById('refresh-documents-button').addEventListener('click', function () {
+      if (state.currentClaim) loadDocuments(state.currentClaim.claim_id);
+    });
+    document.getElementById('confirm-mobile-patient-button').addEventListener('click', confirmMobilePatient);
+    document.querySelectorAll('[data-mobile-type]').forEach(function (input) {
+      input.addEventListener('change', function () { uploadMobileImage(input); });
+    });
+    document.getElementById('finish-mobile-upload-button').addEventListener('click', finishMobileUpload);
+    document.getElementById('close-preview-dialog').addEventListener('click', function () { document.getElementById('preview-dialog').close(); });
+    document.getElementById('generate-pdf-button').addEventListener('click', openPdfConfirmation);
+    document.getElementById('close-pdf-confirm-dialog').addEventListener('click', function () { document.getElementById('pdf-confirm-dialog').close(); });
+    document.getElementById('cancel-pdf-button').addEventListener('click', function () { document.getElementById('pdf-confirm-dialog').close(); });
+    document.getElementById('pdf-confirm-form').addEventListener('submit', generatePdf);
+    document.getElementById('preview-pdf-button').addEventListener('click', previewFinalPdf);
+    document.getElementById('download-pdf-button').addEventListener('click', downloadFinalPdfFromBrowser);
+    document.getElementById('complete-claim-button').addEventListener('click', completeCurrentClaim);
+    document.getElementById('reopen-claim-button').addEventListener('click', reopenCurrentClaim);
+    document.getElementById('close-pdf-preview-dialog').addEventListener('click', closePdfPreview);
+    document.getElementById('pdf-preview-dialog').addEventListener('close', closePdfObjectUrl);
+    document.getElementById('claim-filter-form').addEventListener('submit', function (event) { event.preventDefault(); loadClaims(); });
+    document.getElementById('reset-claim-filter').addEventListener('click', function () { document.getElementById('claim-filter-form').reset(); loadClaims(); });
+    document.getElementById('close-claim-dialog').addEventListener('click', function () { document.getElementById('claim-dialog').close(); });
+    document.getElementById('cancel-claim-button').addEventListener('click', function () { document.getElementById('claim-dialog').close(); });
+    document.getElementById('claim-form').addEventListener('submit', saveClaim);
+    document.getElementById('add-user-button').addEventListener('click', function () { openUserDialog(null); });
+    document.getElementById('close-user-dialog').addEventListener('click', function () { document.getElementById('user-dialog').close(); });
+    document.getElementById('cancel-user-button').addEventListener('click', function () { document.getElementById('user-dialog').close(); });
+    document.getElementById('user-form').addEventListener('submit', saveUser);
+    document.getElementById('login-form').addEventListener('submit', login);
+    document.getElementById('password-change-form').addEventListener('submit', changePassword);
+    document.getElementById('password-change-logout-button').addEventListener('click', logout);
+    document.getElementById('diagnostics-button').addEventListener('click', runDiagnostics);
+    document.getElementById('rotate-orthanc-key-button').addEventListener('click', rotateOrthancKey);
+    document.getElementById('toggle-orthanc-bridge-button').addEventListener('click', toggleOrthancBridge);
+    document.getElementById('copy-orthanc-config-button').addEventListener('click', copyOrthancConfiguration);
+    document.getElementById('close-orthanc-key-dialog').addEventListener('click', function () { document.getElementById('orthanc-key-dialog').close(); });
+    document.getElementById('done-orthanc-key-button').addEventListener('click', function () { document.getElementById('orthanc-key-dialog').close(); });
+    document.getElementById('logout-button').addEventListener('click', logout);
+    callServer('getAppBootstrap', [], initialize, null, function (message) { showLogin(message); });
+  }());
+</script>

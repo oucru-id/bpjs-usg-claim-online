@@ -1,0 +1,10 @@
+.clasp.json
+node_modules/
+.env
+.env.*
+.DS_Store
+*.log
+tmp/
+dist/
+coverage/
+patient-data/
