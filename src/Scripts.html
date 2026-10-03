@@ -1189,6 +1189,26 @@
       return readFileAsDataUrl(blob).then(function (dataUrl) { return String(dataUrl).split(',')[1] || ''; });
     }
 
+    var pdfJsLoadPromise = null;
+    var PDF_JS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/6.3.289/pdf.min.mjs';
+    var PDF_JS_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/6.3.289/pdf.worker.min.mjs';
+    var MAX_PDF_PAGES_PER_UPLOAD = 20;
+
+    function loadPdfJs() {
+      if (window.pdfjsLib && window.pdfjsLib.getDocument) return Promise.resolve(window.pdfjsLib);
+      if (pdfJsLoadPromise) return pdfJsLoadPromise;
+      pdfJsLoadPromise = import(PDF_JS_URL).then(function (pdfjs) {
+        if (!pdfjs || !pdfjs.getDocument) throw new Error('Komponen pembaca PDF tidak tersedia.');
+        pdfjs.GlobalWorkerOptions.workerSrc = PDF_JS_WORKER_URL;
+        window.pdfjsLib = pdfjs;
+        return pdfjs;
+      }).catch(function () {
+          pdfJsLoadPromise = null;
+          throw new Error('Komponen pembaca PDF gagal dimuat. Periksa koneksi internet lalu coba kembali.');
+      });
+      return pdfJsLoadPromise;
+    }
+
     function scaledDimensions(width, height, maximum) {
       var scale = Math.min(1, maximum / Math.max(width, height));
       return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
@@ -1244,6 +1264,71 @@
       };
     }
 
+    function isPdfFile(file) {
+      return Boolean(file) && (String(file.type || '').toLowerCase() === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
+    }
+
+    async function optimizePdf(file, documentType, onProgress) {
+      if (!isPdfFile(file)) throw new Error('Berkas PDF tidak valid.');
+      if (file.size > 25 * 1024 * 1024) throw new Error('Ukuran PDF melebihi 25 MB.');
+      var pdfjs = await loadPdfJs();
+      var loadingTask = pdfjs.getDocument({
+        data: new Uint8Array(await file.arrayBuffer()),
+        isEvalSupported: false,
+        enableScripting: false
+      });
+      var pdf = await loadingTask.promise;
+      try {
+        if (!pdf.numPages) throw new Error('PDF tidak memiliki halaman yang dapat dibaca.');
+        if (pdf.numPages > MAX_PDF_PAGES_PER_UPLOAD) {
+          throw new Error('PDF berisi ' + pdf.numPages + ' halaman. Maksimum ' + MAX_PDF_PAGES_PER_UPLOAD + ' halaman per unggahan.');
+        }
+        var payloads = [];
+        for (var pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+          if (onProgress) onProgress(pageNumber, pdf.numPages);
+          var page = await pdf.getPage(pageNumber);
+          var originalViewport = page.getViewport({ scale: 1 });
+          var dimensions = mobileHdDimensions(originalViewport.width, originalViewport.height);
+          var scale = Math.min(dimensions.width / originalViewport.width, dimensions.height / originalViewport.height);
+          var viewport = page.getViewport({ scale: scale });
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(viewport.width));
+          canvas.height = Math.max(1, Math.round(viewport.height));
+          var context = canvas.getContext('2d', { alpha: false });
+          context.fillStyle = '#ffffff';
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: context, viewport: viewport, background: '#ffffff' }).promise;
+          var blob = await canvasToBlob(canvas, 0.90);
+          if (blob.size > 6 * 1024 * 1024) blob = await canvasToBlob(canvas, 0.78);
+          if (blob.size > 6 * 1024 * 1024) throw new Error('Halaman PDF terlalu besar setelah dioptimalkan.');
+          var thumbnailDimensions = scaledDimensions(canvas.width, canvas.height, 400);
+          var thumbnailCanvas = drawImageToCanvas(canvas, thumbnailDimensions);
+          var thumbnailBlob = await canvasToBlob(thumbnailCanvas, 0.76);
+          payloads.push({
+            document_type: documentType,
+            original_filename: (file.name || 'berkas.pdf') + ' - halaman ' + pageNumber,
+            mime_type: 'image/jpeg',
+            base64: await blobToBase64(blob),
+            width: canvas.width,
+            height: canvas.height,
+            thumbnail_base64: await blobToBase64(thumbnailBlob),
+            thumbnail_width: thumbnailDimensions.width,
+            thumbnail_height: thumbnailDimensions.height
+          });
+          if (page.cleanup) page.cleanup();
+        }
+        return payloads;
+      } finally {
+        if (pdf.cleanup) pdf.cleanup();
+        if (pdf.destroy) await pdf.destroy();
+      }
+    }
+
+    async function optimizeSupportingFile(file, documentType, onPdfProgress) {
+      if (isPdfFile(file)) return optimizePdf(file, documentType, onPdfProgress);
+      return [await optimizeImage(file, documentType)];
+    }
+
     async function uploadPcImages() {
       if (!state.currentClaim) return;
       var input = document.getElementById('pc-usg-input');
@@ -1277,7 +1362,7 @@
       }
     }
 
-    async function uploadClaimSupportingImage(input) {
+    async function uploadClaimSupportingFile(input) {
       if (!state.currentClaim) return;
       var file = input.files && input.files[0];
       if (!file) return;
@@ -1285,16 +1370,25 @@
       var progress = document.getElementById('claim-document-upload-progress');
       document.querySelectorAll('[data-claim-document-type]').forEach(function (element) { element.disabled = true; });
       progress.classList.remove('hidden', 'error');
-      progress.textContent = 'Mengoptimalkan dan mengunggah ' + documentTypeLabel(type) + '...';
+      progress.textContent = 'Menyiapkan ' + documentTypeLabel(type) + '...';
+      var uploadedCount = 0;
       try {
-        var payload = await optimizeImage(file, type);
-        payload.claim_id = state.currentClaim.claim_id;
-        await serverPromise('uploadDocument', [payload]);
-        progress.textContent = '✓ ' + documentTypeLabel(type) + ' berhasil diunggah.';
+        var payloads = await optimizeSupportingFile(file, type, function (page, total) {
+          progress.textContent = 'Menyiapkan halaman PDF ' + page + ' dari ' + total + '...';
+        });
+        for (var i = 0; i < payloads.length; i += 1) {
+          progress.textContent = 'Mengunggah berkas ' + (i + 1) + ' dari ' + payloads.length + '...';
+          payloads[i].claim_id = state.currentClaim.claim_id;
+          await serverPromise('uploadDocument', [payloads[i]]);
+          uploadedCount += 1;
+        }
+        progress.textContent = '✓ ' + (isPdfFile(file) ? payloads.length + ' halaman PDF' : documentTypeLabel(type)) + ' berhasil diunggah.';
         openClaimDetail(state.currentClaim.claim_id);
       } catch (error) {
         progress.classList.add('error');
-        progress.textContent = error && error.message ? error.message : 'Berkas gagal diunggah.';
+        progress.textContent = (uploadedCount ? uploadedCount + ' halaman berhasil diunggah. ' : '') +
+          (error && error.message ? error.message : 'Berkas gagal diunggah.');
+        if (uploadedCount && state.currentClaim) loadDocuments(state.currentClaim.claim_id);
       } finally {
         input.value = '';
         document.querySelectorAll('[data-claim-document-type]').forEach(function (element) { element.disabled = false; });
@@ -1354,7 +1448,7 @@
       }
       callServer('getMobileUploadContext', [initialMobileToken], function (context) {
         state.mobileContext = context;
-        message.textContent = 'Periksa data berikut sebelum membuka kamera.';
+        message.textContent = 'Periksa data berikut sebelum memilih berkas.';
         document.getElementById('mobile-patient-name').textContent = context.patient_name_masked;
         document.getElementById('mobile-examination-date').textContent = formatIndonesianDate(context.examination_date);
         document.getElementById('mobile-facility-name').textContent = context.facility_name;
@@ -1381,23 +1475,32 @@
       });
     }
 
-    async function uploadMobileImage(input) {
+    async function uploadMobileFile(input) {
       var file = input.files && input.files[0];
       if (!file) return;
       var type = input.dataset.mobileType;
       var progress = document.getElementById('mobile-upload-progress');
       document.querySelectorAll('[data-mobile-type]').forEach(function (element) { element.disabled = true; });
       progress.classList.remove('hidden', 'error');
-      progress.textContent = 'Mengoptimalkan dan mengunggah ' + documentTypeLabel(type) + '...';
+      progress.textContent = 'Menyiapkan ' + documentTypeLabel(type) + '...';
+      var uploadedCount = 0;
       try {
-        var payload = await optimizeImage(file, type);
-        await serverPromise('uploadMobileDocument', [initialMobileToken, payload]);
-        progress.textContent = '✓ Foto berhasil diunggah.';
+        var payloads = await optimizeSupportingFile(file, type, function (page, total) {
+          progress.textContent = 'Menyiapkan halaman PDF ' + page + ' dari ' + total + '...';
+        });
+        for (var i = 0; i < payloads.length; i += 1) {
+          progress.textContent = 'Mengunggah berkas ' + (i + 1) + ' dari ' + payloads.length + '...';
+          await serverPromise('uploadMobileDocument', [initialMobileToken, payloads[i]]);
+          uploadedCount += 1;
+        }
+        progress.textContent = '✓ ' + (isPdfFile(file) ? payloads.length + ' halaman PDF' : 'Berkas') + ' berhasil diunggah.';
         input.value = '';
         loadMobileDocuments();
       } catch (error) {
         progress.classList.add('error');
-        progress.textContent = error && error.message ? error.message : 'Foto gagal diunggah.';
+        progress.textContent = (uploadedCount ? uploadedCount + ' halaman berhasil diunggah. ' : '') +
+          (error && error.message ? error.message : 'Berkas gagal diunggah.');
+        if (uploadedCount) loadMobileDocuments();
       } finally {
         input.value = '';
         document.querySelectorAll('[data-mobile-type]').forEach(function (element) { element.disabled = false; });
@@ -1409,7 +1512,7 @@
       callServer('finishMobileUpload', [initialMobileToken], function () {
         document.getElementById('mobile-uploader').classList.add('hidden');
         document.getElementById('mobile-confirmation').classList.remove('hidden');
-        document.getElementById('mobile-confirmation').innerHTML = '<div class="mobile-icon">✓</div><h1>Unggah Selesai</h1><p>Foto sudah tersimpan. Anda dapat menutup halaman ini.</p>';
+        document.getElementById('mobile-confirmation').innerHTML = '<div class="mobile-icon">✓</div><h1>Unggah Selesai</h1><p>Berkas sudah tersimpan. Anda dapat menutup halaman ini.</p>';
         if (window.history && window.history.replaceState) window.history.replaceState({}, document.title, window.location.pathname);
       }, button);
     }
@@ -1671,7 +1774,7 @@
     document.getElementById('pc-usg-input').addEventListener('change', updatePcSelection);
     document.getElementById('pc-upload-button').addEventListener('click', uploadPcImages);
     document.querySelectorAll('[data-claim-document-type]').forEach(function (input) {
-      input.addEventListener('change', function () { uploadClaimSupportingImage(input); });
+      input.addEventListener('change', function () { uploadClaimSupportingFile(input); });
     });
     document.getElementById('create-mobile-token-button').addEventListener('click', createMobileToken);
     document.getElementById('copy-mobile-link-button').addEventListener('click', copyMobileLink);
@@ -1680,7 +1783,7 @@
     });
     document.getElementById('confirm-mobile-patient-button').addEventListener('click', confirmMobilePatient);
     document.querySelectorAll('[data-mobile-type]').forEach(function (input) {
-      input.addEventListener('change', function () { uploadMobileImage(input); });
+      input.addEventListener('change', function () { uploadMobileFile(input); });
     });
     document.getElementById('finish-mobile-upload-button').addEventListener('click', finishMobileUpload);
     document.getElementById('close-preview-dialog').addEventListener('click', function () { document.getElementById('preview-dialog').close(); });

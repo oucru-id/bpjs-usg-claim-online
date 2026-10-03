@@ -13,3 +13,13 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 Sumber: `https://github.com/kazuhikoarase/qrcode-generator`
+
+## PDF.js
+
+Hak cipta (c) Mozilla Foundation
+
+Lisensi Apache, Versi 2.0. Komponen versi `6.3.289` dimuat secara malas dari cdnjs hanya ketika pengguna memilih PDF. Berkas PDF diproses di browser menjadi gambar per halaman; aplikasi tidak mengirim isi PDF ke cdnjs. Evaluasi kode dan scripting di dalam PDF dinonaktifkan.
+
+Sumber: `https://github.com/mozilla/pdf.js`
+
+Lisensi: `https://www.apache.org/licenses/LICENSE-2.0`

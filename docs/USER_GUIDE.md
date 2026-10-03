@@ -55,20 +55,21 @@ Pada status **Draf** atau **Mengumpulkan berkas**, klik **Edit Data Klaim**. Set
 
 Gambar diperkecil tanpa dipotong. Jika satu gambar gagal, gambar yang sudah berhasil sebelumnya tetap tersimpan. Gambar duplikat dalam klaim yang sama akan ditolak.
 
-## Mengunggah foto dari ponsel
+## Mengunggah berkas pendukung
 
 1. Buka alamat `/exec` yang sama pada ponsel.
 2. Masuk memakai nama pengguna dan kata sandi aplikasi.
 3. Cari dan pilih klaim pada **Daftar Klaim USG**.
-4. Periksa nama pasien, tanggal pemeriksaan, dan fasilitas sebelum mengambil foto.
+4. Periksa nama pasien, tanggal pemeriksaan, dan fasilitas sebelum memilih berkas.
 5. Pada **Unggah Berkas Pendukung**, pilih KTP (Identitas), Buku KIA, Berkas SPP & FKPP BPJS, atau Berkas Lainnya.
-6. Ambil satu foto dan tunggu pesan berhasil sebelum mengambil foto berikutnya.
-7. Periksa thumbnail pada **Berkas Klaim**. Gunakan **Lihat** untuk memperbesar atau **Hapus** jika foto salah.
-8. Staf di komputer dapat menekan **Perbarui Daftar** untuk melihat foto terbaru.
+6. Pilih satu PDF atau file foto JPEG/PNG dan tunggu pesan berhasil sebelum memilih berkas berikutnya. Pemilih berkas tidak langsung membuka kamera.
+7. PDF diproses per halaman (maksimum 25 MB dan 20 halaman per unggahan) agar dapat dimasukkan ke PDF klaim bersama berkas lainnya.
+8. Periksa thumbnail pada **Berkas Klaim**. Gunakan **Lihat** untuk memperbesar atau **Hapus** jika berkas salah.
+9. Staf di komputer dapat menekan **Perbarui Daftar** untuk melihat berkas terbaru.
 
-Jangan memotret dokumen jika pasien atau fasilitas pada detail klaim tidak sesuai. Pengguna hanya dapat membuka klaim yang diizinkan oleh akun dan fasilitasnya.
+Jangan memilih atau mengunggah dokumen jika pasien atau fasilitas pada detail klaim tidak sesuai. Pengguna hanya dapat membuka klaim yang diizinkan oleh akun dan fasilitasnya.
 
-Foto berkas pendukung otomatis dikompresi tanpa dipotong. Foto lanskap dibatasi dalam 1280 x 720 piksel dan foto potret dalam 720 x 1280 piksel. Gambar yang proporsinya bukan 16:9 dapat memiliki salah satu sisi lebih kecil. Gambar USG yang diunggah dari komputer tidak memakai batas HD ponsel ini.
+Foto dan setiap halaman PDF berkas pendukung otomatis dioptimalkan tanpa dipotong. Berkas lanskap dibatasi dalam 1280 x 720 piksel dan berkas potret dalam 720 x 1280 piksel. Gambar yang proporsinya bukan 16:9 dapat memiliki salah satu sisi lebih kecil. Gambar USG yang diunggah dari komputer tidak memakai batas HD ini.
 
 Alur QR tetap tersedia sebagai fitur opsional tetapi dinonaktifkan pada mode Puskesmas tunggal.
 

@@ -47,7 +47,9 @@ Version 6.1 adds raw-backup status columns to `ORTHANC_DICOMS` and copies every 
 
 Version 6.3 adds `patient_phone` to `CLAIMS`. Existing claim rows are preserved and receive an empty value; enter a No. HP before editing and saving an older claim.
 
-After a successful migration, the application header should display `6.5.0-anonymous-filenames`.
+Version 6.5 adds anonymous deterministic `F1` storage filenames plus private logical-name and Drive-URL mappings. Version 6.7 adds PDF/JPEG/PNG supporting-file selection and converts each PDF page to JPEG in the browser. The current release does not use Cloud KMS/E1, `FILENAME_KMS_KEY_NAME`, `FilenameCryptoService.gs`, or the `cloud-platform` OAuth scope.
+
+After a successful migration, the application header should display `6.7.0-supporting-pdf-files`.
 
 After deployment, log in as administrator, open **Sistem**, and run **Jalankan Diagnostik**. The server-side self-test function requires an application session token and is not intended to be run directly from the Apps Script editor.
 
@@ -123,7 +125,7 @@ Use clearly fictitious data only, for example `Pasien Demo`, NIK `00000000000000
 10. Enable **Sertakan arsip** and confirm the archived claim is searchable.
 11. Review `AUDIT_LOG` for `CLAIM_CREATED`, `CLAIM_UPDATED`, `CLAIM_COLLECTION_STARTED`, and `CLAIM_ARCHIVED`.
 
-## 8. Test image upload and mobile camera
+## 8. Test image and supporting-document upload
 
 Use only fictitious documents during this test.
 
@@ -132,12 +134,15 @@ Use only fictitious documents during this test.
 3. Upload the same image again and confirm the duplicate warning appears.
 4. Open the normal `/exec` URL on a phone and log in with an authorized application account.
 5. Select the demo claim from **Daftar Klaim USG** and verify the patient, examination date, and facility.
-6. From **Unggah Berkas Pendukung**, photograph one KTP, one Buku KIA page, and one SPP/FKPP BPJS document, waiting for each success message.
-7. In the `DOCUMENTS` sheet, confirm each new supporting photo is at most 1280 x 720 in landscape or 720 x 1280 in portrait. Confirm its aspect ratio is not stretched.
-8. Click **Perbarui Daftar** on the computer and confirm the new thumbnails appear.
-9. Use **Lihat**, then delete one fictitious photo and confirm it disappears while its `DOCUMENTS` row remains with `deleted_flag=TRUE`.
-10. Confirm another-facility staff account cannot find the claim or retrieve its thumbnails.
-11. Review `AUDIT_LOG` for `DOCUMENT_UPLOADED` and `DOCUMENT_DELETED`.
+6. From **Unggah Berkas Pendukung**, choose a PDF or JPEG/PNG photo for KTP, Buku KIA, and SPP/FKPP BPJS, waiting for each success message. Confirm that the picker does not open the camera automatically.
+7. Upload one fictitious multi-page PDF. Confirm each page becomes a separate JPEG document in the original page order.
+8. Confirm a PDF larger than 25 MB and a PDF with more than 20 pages are rejected with a clear message.
+9. In the `DOCUMENTS` sheet, confirm each new supporting photo or rendered PDF page is at most 1280 x 720 in landscape or 720 x 1280 in portrait. Confirm its aspect ratio is not stretched.
+10. Click **Perbarui Daftar** on the computer and confirm the new thumbnails appear.
+11. Use **Lihat**, then delete one fictitious document and confirm it disappears while its `DOCUMENTS` row remains with `deleted_flag=TRUE`.
+12. Confirm another-facility staff account cannot find the claim or retrieve its thumbnails.
+13. Repeat the PDF selection on a real phone using the clinic network. If the PDF component fails to load, verify access to `cdnjs.cloudflare.com` and retry.
+14. Review `AUDIT_LOG` for `DOCUMENT_UPLOADED` and `DOCUMENT_DELETED`.
 
 ## 9. Test document management and PDF
 
@@ -193,6 +198,8 @@ Do not begin continuous synchronization until the one-time test has passed on th
 12. In the private Spreadsheet, verify each PDF/DICOM row contains the logical/original filename, anonymous storage filename, and its primary/backup Drive URL. Do not expose these URLs in the staff UI.
 
 `setupApplication()` creates `FILENAME_CODE_SECRET` once. Never edit, rotate, or delete this property without a controlled migration because it determines the stable anonymous codes.
+
+`F1` is one-way and cannot be decrypted. Preserve the private Spreadsheet mapping (`*_filename`, `*_storage_filename`, file ID, and Drive URL columns) together with the Drive data for recovery.
 
 Do not paste the second account's password or credential JSON into Apps Script, `config.json`, chat, or Git. Folder-level sharing is sufficient for this design.
 

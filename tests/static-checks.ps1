@@ -154,7 +154,7 @@ foreach ($requiredPdfFeature in @(
 }
 $pdfSource = Get-Content -LiteralPath (Join-Path $sourceRoot 'PdfService.gs') -Raw
 foreach ($requiredPdfLayoutFeature in @(
-  "APP_VERSION: '6.5.0-anonymous-filenames'",
+  "APP_VERSION: '6.7.0-supporting-pdf-files'",
   "['PDF_USG_IMAGES_PER_PAGE', '1'",
   'var PDF_LAYOUT = Object.freeze',
   "body.appendParagraph('KLAIM USG BPJS')",
@@ -204,13 +204,21 @@ foreach ($requiredUploadFeature in @(
   'DUPLICATE_DOCUMENT',
   'sha256Hex_',
   'mobile_upload_token_hash: tokenHash',
-  'capture="environment"',
+  'accept="application/pdf,image/jpeg,image/png"',
+  'function loadPdfJs',
+  'function optimizePdf',
+  'function optimizeSupportingFile',
+  'isEvalSupported: false',
+  'enableScripting: false',
   'canvas.toBlob',
   "qrcode(0, 'M')"
 )) {
   if (-not $sourceText.Contains($requiredUploadFeature)) {
     $failures.Add("Phase 3 upload flow missing: $requiredUploadFeature")
   }
+}
+if ($sourceText.Contains('capture="environment"')) {
+  $failures.Add('Supporting-document picker must not force the device camera.')
 }
 foreach ($requiredSingleFacilityFeature in @(
   "['ENABLE_MOBILE_QR_UPLOAD', 'false'",
@@ -399,7 +407,6 @@ if ($manifest.oauthScopes -notcontains 'https://www.googleapis.com/auth/script.e
 if ($manifest.oauthScopes -notcontains 'https://www.googleapis.com/auth/documents') {
   $failures.Add('Manifest must include the Google Documents scope for PDF generation.')
 }
-
 if ($failures.Count -gt 0) {
   $failures | ForEach-Object { Write-Error $_ }
   exit 1

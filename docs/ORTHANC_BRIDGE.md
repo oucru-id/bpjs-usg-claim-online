@@ -20,7 +20,7 @@ Bridge tidak langsung membuat klaim. Konfirmasi petugas wajib karena `PatientID`
 2. Jalankan `setupApplication()` sebagai administrator pemasang.
 3. Pastikan hasil setup memuat sheet `ORTHANC_INBOX` dan `ORTHANC_IMAGES`.
 4. Buat deployment web app versi baru.
-5. Muat ulang URL `/exec` dan pastikan versi `6.5.0-anonymous-filenames` tampil.
+5. Muat ulang URL `/exec` dan pastikan versi `6.7.0-supporting-pdf-files` tampil.
 
 Setup menambah kolom `patient_phone` pada `CLAIMS`, kolom referensi Orthanc pada `DOCUMENTS`, sheet `ORTHANC_INBOX`, `ORTHANC_IMAGES`, dan `ORTHANC_DICOMS`, serta folder privat `SYSTEM/ORTHANC_INBOX`. Setup tidak menghapus klaim atau dokumen lama. Karena versi aplikasi berubah, sesi lama dicabut satu kali dan pengguna perlu masuk kembali.
 

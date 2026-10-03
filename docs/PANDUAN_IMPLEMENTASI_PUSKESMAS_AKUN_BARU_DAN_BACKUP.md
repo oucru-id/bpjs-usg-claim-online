@@ -2,7 +2,7 @@
 
 ## Puskesmas dengan PC dan Akun Google Sendiri, Terhubung ke Akun Backup
 
-**Versi aplikasi acuan:** `6.5.0-anonymous-filenames`
+**Versi aplikasi acuan:** `6.7.0-supporting-pdf-files`
 
 **Tanggal dokumen:** 3 Oktober 2026
 **Sasaran:** administrator TI, penanggung jawab program, dan petugas Puskesmas
@@ -21,6 +21,10 @@ Dokumen ini menjelaskan pemasangan satu ekosistem Sistem Klaim USG BPJS pada Pus
 6. Petugas tetap harus memeriksa identitas pasien sebelum pemeriksaan Orthanc dibuat menjadi klaim.
 
 Panduan ini adalah prosedur instalasi baru. Jangan menyalin rahasia, password pepper, kunci bridge, sesi, atau berkas konfigurasi privat dari Puskesmas lain.
+
+### Catatan penting untuk rilis terbaru
+
+Source saat ini menggunakan nama penyimpanan anonim `F1` berbasis HMAC dan `FILENAME_CODE_SECRET`. Rilis ini **tidak** memakai Cloud KMS, filename `E1`, `FILENAME_KMS_KEY_NAME`, scope `cloud-platform`, atau `FilenameCryptoService.gs`. Jika masih memiliki salinan panduan eksperimen KMS sebelumnya, jangan ikuti bagian tersebut untuk instalasi ini. `FILENAME_CODE_SECRET` dibuat otomatis oleh `setupApplication()` dan tidak boleh disalin dari Puskesmas lain.
 
 ## 2. Topologi yang akan dibuat
 
@@ -79,7 +83,7 @@ Backup Drive kedua yang sudah diimplementasikan aplikasi mencakup:
 | DICOM yang sudah dikaitkan dengan klaim | `DICOM` | Setelah petugas mengonfirmasi klaim |
 | PDF klaim terbaru | `KLAIM` | Setelah PDF berhasil dibuat |
 
-Nama fisik pada kedua Drive menggunakan kode anonim stabil (`DICOM_RAW_F1<KODE>.dcm`, `DICOM_F1<KODE>[_NNN].dcm`, dan `KLAIM_F1<KODE>[_vNNN].pdf`). Spreadsheet database privat menyimpan nama logis/asli, nama fisik anonim, serta URL file primer dan backup. Rahasia `FILENAME_CODE_SECRET` dibuat sekali oleh `setupApplication()` dan tidak boleh diganti atau dihapus tanpa migrasi terkontrol.
+Nama fisik pada kedua Drive menggunakan kode anonim HMAC (`DICOM_RAW_F1<KODE>.dcm`, `DICOM_F1<KODE>[_NNN].dcm`, `KLAIM_F1<KODE>_vNNN.pdf`, dan `KLAIM_F1<KODE>.pdf`). Spreadsheet privat menyimpan nama logis, nama fisik anonim, dan URL file untuk rekonstruksi nama asli. Kode `F1` tidak dapat didekripsi; rekonstruksi bergantung pada mapping database privat.
 
 Backup otomatis ini **tidak** mencakup:
 
@@ -87,7 +91,7 @@ Backup otomatis ini **tidak** mencakup:
 - Script Properties dan rahasia autentikasi;
 - source/deployment Apps Script;
 - akun aplikasi dan sesi login;
-- seluruh foto dokumen pendukung selain yang masuk ke PDF;
+- file PDF asli dan foto dokumen pendukung selain halaman/gambar yang sudah dimasukkan ke PDF klaim;
 - konfigurasi lokal Orthanc, `config.json`, atau `state.json`;
 - pemulihan otomatis jika akun operasional tidak dapat digunakan.
 
@@ -112,6 +116,7 @@ Siapkan dan catat:
 - [ ] PC mempunyai ruang disk yang cukup dan sinkronisasi waktu aktif.
 - [ ] Alamat IP PC Orthanc dibuat tetap atau mendapat DHCP reservation.
 - [ ] Internet stabil untuk koneksi keluar HTTPS.
+- [ ] Browser PC dan ponsel dapat mengakses `cdnjs.cloudflare.com` untuk memuat PDF.js ketika pengguna memilih PDF pendukung.
 - [ ] Python tersedia dan dapat dipanggil dengan perintah `python`.
 - [ ] Akun Windows khusus/terkendali tersedia untuk menjalankan bridge.
 
@@ -223,7 +228,7 @@ Sebelum validasi backup:
 5. Pastikan fungsi selesai tanpa error.
 6. Catat hasil yang menampilkan:
 
-   - `appVersion` = `6.5.0-anonymous-filenames`;
+   - `appVersion` = `6.7.0-supporting-pdf-files`;
    - `databaseSpreadsheetId`;
    - `rootDriveFolderId`;
    - `claimsFolderId`;
@@ -261,7 +266,7 @@ ORTHANC_DICOMS
 SETTINGS
 ```
 
-Pada Script Properties, pastikan ID utama, `ADMIN_EMAIL`, `PASSWORD_PEPPER`, dan pengaturan autentikasi sudah terbentuk. Jangan menyalin nilai rahasia tersebut ke laporan atau chat.
+Pada Script Properties, pastikan ID utama, `ADMIN_EMAIL`, `PASSWORD_PEPPER`, `FILENAME_CODE_SECRET`, dan pengaturan autentikasi sudah terbentuk. Jangan menyalin nilai rahasia tersebut ke laporan atau chat. Pastikan tidak ada kewajiban menambahkan `FILENAME_KMS_KEY_NAME` untuk source versi ini.
 
 ## 8. Fase C — Menghubungkan dan menguji akun backup
 
@@ -298,7 +303,7 @@ Jangan mengaktifkan backup sebelum folder dan izin antarakun berhasil divalidasi
 
 1. Pada Apps Script, pilih **Deploy → New deployment**.
 2. Pilih jenis **Web app**.
-3. Isi deskripsi versi, misalnya `Instalasi awal Puskesmas <Nama> - 6.5.0`.
+3. Isi deskripsi versi, misalnya `Instalasi awal Puskesmas <Nama> - 6.7.0`.
 4. Atur **Execute as: Me**.
 5. Atur akses **Anyone** atau **Anyone with the link**, sesuai tampilan Workspace.
 6. Klik **Deploy** dan selesaikan otorisasi.
@@ -335,6 +340,23 @@ Untuk setiap petugas:
 7. Nonaktifkan akun segera ketika petugas pindah tugas.
 
 Jangan membuat satu username bersama untuk banyak petugas karena audit membutuhkan identitas pengguna yang berbeda.
+
+### Langkah E3 — Uji berkas pendukung PDF/JPEG/PNG
+
+Versi `6.7.0-supporting-pdf-files` tidak lagi memaksa kamera ponsel terbuka. Dari bagian **Unggah Berkas Pendukung**, petugas memilih berkas untuk kategori KTP, Buku KIA, SPP/FKPP BPJS, atau Berkas Lainnya.
+
+Aturan pemrosesan:
+
+- format yang dapat dipilih adalah PDF, JPEG, atau PNG;
+- satu PDF maksimal 25 MB dan 20 halaman;
+- PDF.js dimuat dari cdnjs hanya ketika pengguna memilih PDF;
+- isi PDF diproses di browser dan tidak dikirim ke cdnjs;
+- setiap halaman PDF dirender menjadi JPEG dan diunggah sebagai dokumen terpisah dengan urutan halaman yang sama;
+- foto dan halaman PDF dioptimalkan tanpa dipotong, maksimum 1280 × 720 untuk lanskap atau 720 × 1280 untuk potret;
+- file PDF asli tidak disimpan sebagai dokumen klaim;
+- tunggu pesan berhasil sebelum memilih berkas berikutnya.
+
+Uji sedikitnya satu JPEG/PNG, satu PDF satu halaman, dan satu PDF beberapa halaman pada PC serta ponsel nyata. Jika PDF.js tidak dapat dimuat, periksa akses jaringan ke `cdnjs.cloudflare.com`; keberhasilan unggah foto saja belum membuktikan unggah PDF bekerja.
 
 ## 11. Fase F — Menyiapkan Orthanc pada PC Puskesmas
 
@@ -517,7 +539,7 @@ Gunakan data fiktif. Semua item berikut harus lulus.
 
 ### 13.1 Aplikasi dan hak akses
 
-- [ ] Header menampilkan versi `6.5.0-anonymous-filenames`.
+- [ ] Header menampilkan versi `6.7.0-supporting-pdf-files`.
 - [ ] ADMIN dapat membuka menu Pengguna dan Sistem.
 - [ ] STAFF tidak dapat membuka menu admin.
 - [ ] STAFF dari fasilitas lain tidak dapat melihat klaim tanpa izin eksplisit.
@@ -531,7 +553,10 @@ Gunakan data fiktif. Semua item berikut harus lulus.
 - [ ] NIK harus 16 digit dan No. HP tervalidasi.
 - [ ] Nama folder klaim tidak berisi nama pasien, NIK, atau No. HP.
 - [ ] Gambar dari PC dapat diunggah.
-- [ ] Kamera ponsel dapat mengunggah dokumen.
+- [ ] Pemilih berkas pada PC dan ponsel menerima PDF, JPEG, dan PNG tanpa memaksa kamera terbuka.
+- [ ] PDF pendukung satu halaman dan beberapa halaman dapat diproses serta diunggah per halaman.
+- [ ] PDF lebih dari 25 MB atau lebih dari 20 halaman ditolak dengan pesan yang jelas.
+- [ ] Setiap halaman PDF menjadi gambar JPEG dan tetap berada dalam batas HD tanpa terpotong atau terdistorsi.
 - [ ] Duplikat gambar ditolak.
 - [ ] Rotasi, urutan, dan pilihan gambar tetap benar setelah halaman dimuat ulang.
 - [ ] PDF `v001` dan `v002` dapat dibuat tanpa menimpa versi utama sebelumnya.
@@ -548,6 +573,10 @@ Gunakan data fiktif. Semua item berikut harus lulus.
 - [ ] DICOM klaim tampil di `DICOM` akun backup.
 - [ ] PDF terbaru tampil di `KLAIM` akun backup.
 - [ ] Regenerasi PDF mengganti backup bernama sama, bukan membuat duplikat tak terkendali.
+- [ ] Filename fisik memakai kode anonim `F1` dan tidak menampilkan Puskesmas, NIK, atau No. HP.
+- [ ] Nama asli dapat direkonstruksi dari pasangan nama logis dan nama penyimpanan pada database privat.
+- [ ] Snapshot database menyimpan mapping nama logis, nama `F1`, file ID, dan URL Drive yang diperlukan untuk pemulihan.
+- [ ] Pemeriksaan `Rahasia kode nama file` menunjukkan `OK`.
 - [ ] Menu **Sistem → Jalankan Diagnostik** menunjukkan folder Drive cadangan `OK`.
 - [ ] Studi yang sama tidak diduplikasi ketika bridge dijalankan kembali.
 
@@ -555,7 +584,8 @@ Gunakan data fiktif. Semua item berikut harus lulus.
 
 - [ ] `/exec` diuji pada jendela incognito/private baru.
 - [ ] Login diuji pada PC petugas.
-- [ ] Login dan kamera diuji pada ponsel nyata.
+- [ ] Login serta pemilihan PDF/JPEG/PNG diuji pada ponsel nyata.
+- [ ] Unggah PDF diuji pada jaringan Puskesmas untuk memastikan PDF.js dapat dimuat dari cdnjs.
 - [ ] Tampilan diuji pada jaringan Puskesmas yang akan digunakan.
 - [ ] Bookmark hanya menunjuk ke URL produksi `/exec`.
 
@@ -571,7 +601,7 @@ backupExistingClaimFiles()
 
 Fungsi memproses batch terbatas dan aman dijalankan berulang. Ulangi sampai satu eksekusi berikutnya menghasilkan seluruh penghitung `Ready` dan `Error` bernilai `0`. Jika ada penghitung `Error`, periksa kolom error pada database dan izin folder; jangan sekadar mengulang tanpa mencari penyebab.
 
-Backfill juga mengganti nama fisik lama yang masih memuat identitas pasien menjadi kode anonim serta mengisi pasangan nama logis, nama penyimpanan, dan URL Drive pada sheet `CLAIMS` dan `ORTHANC_DICOMS`.
+Backfill juga mengganti nama fisik lama yang masih memuat identitas pasien menjadi kode anonim `F1` serta mengisi pasangan nama logis, nama penyimpanan, dan URL Drive pada sheet `CLAIMS` dan `ORTHANC_DICOMS`. Karena `F1` tidak dapat dibalik, jangan menghapus database atau mapping tersebut setelah backfill.
 
 Periksa backup secara berkala:
 
@@ -638,6 +668,7 @@ Jangan menghapus `state.json` sebagai langkah pertama. Penghapusan dapat membuat
    node .\tests\browser-auth-smoke.js
    node .\tests\client-image-tests.js
    node .\tests\pdf-layout-tests.js
+   node .\tests\browser-supporting-upload-smoke.js
    node .\tests\backup-service-tests.js
    node .\tests\identity-display-tests.js
    node .\tests\claim-phone-tests.js
@@ -660,6 +691,10 @@ Jangan menghapus `state.json` sebagai langkah pertama. Penghapusan dapat membuat
 
 Saat ini aplikasi memiliki satu kunci bridge aktif. Rotasi kunci langsung membatalkan konfigurasi lama.
 
+### Rahasia kode nama file
+
+Jangan mengubah atau menghapus `FILENAME_CODE_SECRET` setelah file produksi dibuat. Kode anonim `F1` adalah HMAC satu arah; nama asli direkonstruksi menggunakan mapping pada database privat. Karena itu, database dan URL/file ID Drive harus selalu dicadangkan bersama.
+
 ### Password pepper
 
 Jangan mengubah atau menghapus `PASSWORD_PEPPER` setelah akun pengguna dibuat. Perubahan pepper membuat semua hash password lama tidak dapat diverifikasi.
@@ -674,6 +709,7 @@ Sebelum go-live, institusi harus menetapkan:
 - siapa yang memiliki akun backup;
 - lokasi source versi rilis;
 - metode snapshot database dan retensi yang disetujui;
+- cara memulihkan pasangan nama logis, nama `F1`, file ID, dan URL Drive dari snapshot database;
 - metode backup konfigurasi Orthanc/bridge secara terenkripsi;
 - target waktu pemulihan;
 - jadwal uji pemulihan;
@@ -691,7 +727,7 @@ Isi tanpa menuliskan password atau kunci rahasia:
 | Email akun operasional |  |
 | Email pemilik akun backup |  |
 | Nama proyek Apps Script |  |
-| Versi aplikasi | `6.5.0-anonymous-filenames` |
+| Versi aplikasi | `6.7.0-supporting-pdf-files` |
 | URL produksi `/exec` |  |
 | Nama folder backup |  |
 | IP PC Orthanc |  |
@@ -700,6 +736,7 @@ Isi tanpa menuliskan password atau kunci rahasia:
 | Tanggal uji data fiktif |  |
 | Hasil diagnostik | Lulus / Tidak lulus |
 | Hasil uji backup | Lulus / Tidak lulus |
+| Hasil uji PDF pendukung | Lulus / Tidak lulus |
 | Hasil uji browser/ponsel | Lulus / Tidak lulus |
 | Penanggung jawab Puskesmas |  |
 | Administrator teknis |  |
@@ -723,10 +760,11 @@ Implementasi dinyatakan selesai hanya bila:
 3. akun backup memiliki folder backup privat dan akun operasional hanya diberi Editor pada folder tersebut;
 4. `validateSecondaryBackupConfiguration()` berhasil;
 5. deployment produksi `/exec` dapat diakses dan login aplikasi bekerja;
-6. alat USG berhasil mengirim studi fiktif ke Orthanc;
-7. OrthancBridge berhasil mengirim studi ke inbox tanpa membuat klaim otomatis;
-8. petugas berhasil meninjau dan mengonfirmasi pasien;
-9. DICOM raw, DICOM klaim, dan PDF muncul pada akun backup;
-10. diagnostik, browser, ponsel, PDF, restart/login Windows, dan deduplikasi sudah diuji;
-11. daftar serah terima ditandatangani;
-12. hasil lokal, deployment live, dan operasi klinik nyata tetap dicatat sebagai tiga tingkat verifikasi yang berbeda.
+6. PDF/JPEG/PNG pendukung berhasil dipilih dan diproses pada PC serta ponsel nyata;
+7. alat USG berhasil mengirim studi fiktif ke Orthanc;
+8. OrthancBridge berhasil mengirim studi ke inbox tanpa membuat klaim otomatis;
+9. petugas berhasil meninjau dan mengonfirmasi pasien;
+10. DICOM raw, DICOM klaim, dan PDF muncul pada akun backup;
+11. diagnostik, browser, ponsel, PDF, restart/login Windows, dan deduplikasi sudah diuji;
+12. daftar serah terima ditandatangani;
+13. hasil lokal, deployment live, dan operasi klinik nyata tetap dicatat sebagai tiga tingkat verifikasi yang berbeda.

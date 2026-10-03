@@ -1,7 +1,7 @@
 var APP_CONFIG = Object.freeze({
   APP_NAME: 'Sistem Klaim USG BPJS',
   APP_DESCRIPTION: 'Pengelolaan klaim USG, dokumen pendukung, dan data DICOM Orthanc secara terintegrasi.',
-  APP_VERSION: '6.5.0-anonymous-filenames',
+  APP_VERSION: '6.7.0-supporting-pdf-files',
   AUTH_MODE: 'USERNAME_PASSWORD',
   TIMEZONE: 'Asia/Makassar',
   DATABASE_NAME: 'BPJS_USG_APP_DATABASE',

@@ -115,13 +115,13 @@
 
         <article class="card upload-card">
           <div class="section-heading compact-heading">
-            <div><h2>Unggah Berkas Pendukung</h2><p>Di ponsel, masuk ke aplikasi, pilih klaim ini, lalu ambil foto sesuai jenis berkas. Foto otomatis dikompresi maksimum HD: 1280 x 720 untuk lanskap atau 720 x 1280 untuk potret, tanpa dipotong.</p></div>
+            <div><h2>Unggah Berkas Pendukung</h2><p>Pilih PDF atau file foto JPEG/PNG sesuai jenis berkas. Pemilih berkas tidak langsung membuka kamera. Foto dan setiap halaman PDF otomatis dioptimalkan maksimum HD tanpa dipotong.</p></div>
           </div>
           <div id="claim-supporting-upload-controls" class="supporting-upload-grid">
-            <label class="capture-button"><span>📷 KTP (Identitas)</span><input type="file" accept="image/*" capture="environment" data-claim-document-type="KTP"></label>
-            <label class="capture-button"><span>📷 Buku KIA</span><input type="file" accept="image/*" capture="environment" data-claim-document-type="BUKU_KIA"></label>
-            <label class="capture-button"><span>📷 Berkas SPP &amp; FKPP BPJS</span><input type="file" accept="image/*" capture="environment" data-claim-document-type="SPP_FKPP_BPJS"></label>
-            <label class="capture-button"><span>📷 Berkas Lainnya</span><input type="file" accept="image/*" capture="environment" data-claim-document-type="OTHER"></label>
+            <label class="capture-button"><span>📎 KTP (Identitas)</span><input type="file" accept="application/pdf,image/jpeg,image/png" data-claim-document-type="KTP"></label>
+            <label class="capture-button"><span>📎 Buku KIA</span><input type="file" accept="application/pdf,image/jpeg,image/png" data-claim-document-type="BUKU_KIA"></label>
+            <label class="capture-button"><span>📎 Berkas SPP &amp; FKPP BPJS</span><input type="file" accept="application/pdf,image/jpeg,image/png" data-claim-document-type="SPP_FKPP_BPJS"></label>
+            <label class="capture-button"><span>📎 Berkas Lainnya</span><input type="file" accept="application/pdf,image/jpeg,image/png" data-claim-document-type="OTHER"></label>
           </div>
           <div id="claim-document-upload-progress" class="upload-progress hidden" role="status"></div>
         </article>
@@ -181,7 +181,7 @@
           <div><dt>Tanggal USG</dt><dd id="mobile-examination-date">-</dd></div>
           <div><dt>Fasilitas</dt><dd id="mobile-facility-name">-</dd></div>
         </dl>
-        <p id="mobile-patient-warning" class="warning-box hidden">Pastikan semua berkas yang akan difoto adalah milik pasien ini. NIK lengkap tidak ditampilkan pada ponsel.</p>
+        <p id="mobile-patient-warning" class="warning-box hidden">Pastikan semua berkas yang akan dipilih adalah milik pasien ini. NIK lengkap tidak ditampilkan pada ponsel.</p>
         <button id="confirm-mobile-patient-button" class="primary hidden" type="button">Ya, Pasien Benar</button>
       </article>
 
@@ -189,19 +189,19 @@
         <article class="card mobile-card">
           <h1>Unggah Berkas</h1>
           <p>Pasien: <strong id="mobile-upload-patient">-</strong></p>
-          <p class="muted">Setiap foto otomatis dikompresi maksimum HD (1280 x 720 untuk lanskap atau 720 x 1280 untuk potret) tanpa dipotong, lalu diunggah satu per satu.</p>
+          <p class="muted">Pilih PDF atau file foto JPEG/PNG. Pemilih berkas tidak langsung membuka kamera. Foto dan setiap halaman PDF otomatis dioptimalkan maksimum HD tanpa dipotong, lalu diunggah satu per satu.</p>
           <div class="mobile-capture-list">
-            <label class="capture-button"><span>📷 Foto KTP (Identitas)</span><input type="file" accept="image/*" capture="environment" data-mobile-type="KTP"></label>
-            <label class="capture-button"><span>📷 Foto Buku KIA</span><input type="file" accept="image/*" capture="environment" data-mobile-type="BUKU_KIA"></label>
-            <label class="capture-button"><span>📷 Foto Berkas SPP &amp; FKPP BPJS</span><input type="file" accept="image/*" capture="environment" data-mobile-type="SPP_FKPP_BPJS"></label>
-            <label class="capture-button"><span>📷 Foto Berkas Lainnya</span><input type="file" accept="image/*" capture="environment" data-mobile-type="OTHER"></label>
+            <label class="capture-button"><span>📎 KTP (Identitas)</span><input type="file" accept="application/pdf,image/jpeg,image/png" data-mobile-type="KTP"></label>
+            <label class="capture-button"><span>📎 Buku KIA</span><input type="file" accept="application/pdf,image/jpeg,image/png" data-mobile-type="BUKU_KIA"></label>
+            <label class="capture-button"><span>📎 Berkas SPP &amp; FKPP BPJS</span><input type="file" accept="application/pdf,image/jpeg,image/png" data-mobile-type="SPP_FKPP_BPJS"></label>
+            <label class="capture-button"><span>📎 Berkas Lainnya</span><input type="file" accept="application/pdf,image/jpeg,image/png" data-mobile-type="OTHER"></label>
           </div>
           <div id="mobile-upload-progress" class="upload-progress hidden" role="status"></div>
         </article>
         <article class="card mobile-card">
-          <h2>Foto yang Sudah Diunggah</h2>
+          <h2>Berkas yang Sudah Diunggah</h2>
           <div id="mobile-document-grid" class="document-grid mobile-document-grid"></div>
-          <p id="mobile-documents-empty" class="empty-state">Belum ada foto.</p>
+          <p id="mobile-documents-empty" class="empty-state">Belum ada berkas.</p>
           <button id="finish-mobile-upload-button" class="primary full-width" type="button">Selesai</button>
         </article>
       </section>
