@@ -18,7 +18,7 @@ function listClaims(sessionToken, filters) {
       if (status && claimStatus !== status) return false;
       if (examinationDate && claimDateKey_(claim.examination_date) !== examinationDate) return false;
       if (!search) return true;
-      return [claim.claim_code, claim.patient_name, claim.patient_nik].some(function (value) {
+      return [claim.claim_code, claim.patient_name, claim.patient_nik, claim.patient_phone].some(function (value) {
         return normalizeString_(value).toLowerCase().indexOf(search) >= 0;
       });
     });
@@ -87,6 +87,7 @@ function createClaim(sessionToken, payload) {
         facility_id: values.facility_id,
         patient_name: values.patient_name,
         patient_nik: values.patient_nik,
+        patient_phone: values.patient_phone,
         patient_birth_date: values.patient_birth_date,
         examination_date: values.examination_date,
         status: CLAIM_STATUSES.DRAFT,
@@ -130,6 +131,7 @@ function updateClaim(sessionToken, payload) {
       var changes = {
         patient_name: values.patient_name,
         patient_nik: values.patient_nik,
+        patient_phone: values.patient_phone,
         patient_birth_date: values.patient_birth_date,
         examination_date: values.examination_date,
         updated_by: user.google_email,
@@ -208,6 +210,7 @@ function archiveClaim(sessionToken, claimId) {
 function validateClaimPayload_(user, payload, existingClaim) {
   var patientName = sanitizePlainText_(payload.patient_name, 120);
   var patientNik = normalizeString_(payload.patient_nik).replace(/\s/g, '');
+  var patientPhone = normalizePatientPhone_(payload.patient_phone);
   var facilityId = existingClaim
     ? normalizeString_(existingClaim.facility_id)
     : normalizeString_(payload.facility_id || user.facility_id);
@@ -227,10 +230,24 @@ function validateClaimPayload_(user, payload, existingClaim) {
   return {
     patient_name: patientName,
     patient_nik: patientNik,
+    patient_phone: patientPhone,
     patient_birth_date: birthDate,
     examination_date: examinationDate,
     facility_id: facilityId
   };
+}
+
+function normalizePatientPhone_(value) {
+  var text = normalizeString_(value);
+  assert_(text, 'PATIENT_PHONE_REQUIRED', 'No. HP wajib diisi.');
+  assert_(/^[+()0-9.\s-]+$/.test(text), 'INVALID_PATIENT_PHONE',
+    'No. HP harus diawali 08 atau +628 dan terdiri dari 10-13 angka.');
+  var digits = text.replace(/\D/g, '');
+  if (digits.indexOf('62') === 0) digits = '0' + digits.substring(2);
+  else if (digits.indexOf('8') === 0) digits = '0' + digits;
+  assert_(/^08\d{8,11}$/.test(digits), 'INVALID_PATIENT_PHONE',
+    'No. HP harus diawali 08 atau +628 dan terdiri dari 10-13 angka.');
+  return digits;
 }
 
 function parseClaimDate_(value, fieldName) {
@@ -269,8 +286,9 @@ function claimListItem_(claim, facilities) {
   return {
     claim_id: normalizeString_(claim.claim_id),
     claim_code: normalizeString_(claim.claim_code),
-    patient_name_masked: maskPatientName(claim.patient_name),
-    patient_nik_masked: maskNik(claim.patient_nik),
+    patient_name: normalizeString_(claim.patient_name),
+    patient_nik: normalizeString_(claim.patient_nik),
+    patient_phone: normalizeString_(claim.patient_phone),
     examination_date: claimDateKey_(claim.examination_date),
     status: normalizeString_(claim.status).toUpperCase(),
     facility_id: normalizeString_(claim.facility_id),
@@ -294,6 +312,7 @@ function claimDetailForClient_(claim) {
     facility_name: facility ? normalizeString_(facility.facility_name) : normalizeString_(claim.facility_id),
     patient_name: normalizeString_(claim.patient_name),
     patient_nik: normalizeString_(claim.patient_nik),
+    patient_phone: normalizeString_(claim.patient_phone),
     patient_nik_masked: maskNik(claim.patient_nik),
     patient_birth_date: claimDateKey_(claim.patient_birth_date),
     examination_date: claimDateKey_(claim.examination_date),

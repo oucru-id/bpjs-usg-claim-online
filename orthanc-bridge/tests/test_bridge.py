@@ -20,6 +20,9 @@ SPEC.loader.exec_module(bridge)
 
 
 class MetadataTests(unittest.TestCase):
+    def test_default_poll_interval_is_ten_minutes(self) -> None:
+        self.assertEqual(bridge.BridgeConfig.__dataclass_fields__["poll_seconds"].default, 600)
+
     def test_dicom_date(self) -> None:
         self.assertEqual(bridge.dicom_date("20260913"), "2026-09-13")
         self.assertEqual(bridge.dicom_date("20261340"), "")
@@ -46,6 +49,7 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(result["patient_birth_date"], "1990-01-02")
         self.assertEqual(result["study_date"], "2026-09-13")
         self.assertEqual(result["expected_images"], 3)
+        self.assertEqual(result["expected_dicoms"], 0)
 
     def test_apps_script_endpoint_is_restricted_to_https_google_deployment(self) -> None:
         valid = bridge.BridgeConfig(
@@ -131,6 +135,7 @@ class SyncTests(unittest.TestCase):
             apps_script_url="https://script.google.com/macros/s/deployment-id/exec",
             bridge_id="ORTHANC_TEST",
             bridge_key="a" * 96,
+            upload_original_dicoms=False,
         )
         study = {
             "ID": "study-1",
@@ -155,6 +160,88 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(finalize["expected_images"], 3)
         self.assertEqual(finalize["skipped_images"], 2)
         self.assertEqual(len(state.marked), 1)
+
+    def test_completed_preview_study_backfills_original_dicom(self) -> None:
+        raw_dicom = b"DICM-original-content"
+
+        class FakeOrthanc:
+            def instance_tags(self, _instance_id: str) -> dict:
+                return {"SOPInstanceUID": "1.2.3.1"}
+
+            def instance_file(self, _instance_id: str) -> bytes:
+                return raw_dicom
+
+        class FakeWebApp:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict]] = []
+                self.uploads: list[tuple[str, bytes]] = []
+
+            def post(self, action: str, **values: object) -> dict:
+                self.calls.append((action, values))
+                if action == "upsert_study":
+                    return {
+                        "status": "IMPORTED",
+                        "should_upload": False,
+                        "should_upload_images": False,
+                        "should_upload_dicoms": True,
+                    }
+                if action == "prepare_dicom_upload":
+                    return {
+                        "dicom_id": "12345678-1234-4123-8123-123456789abc",
+                        "upload_url": "https://www.googleapis.com/upload/drive/v3/files?upload_id=test",
+                        "should_upload": True,
+                    }
+                if action == "finalize_study":
+                    return {"status": "IMPORTED", "received_dicoms": 1}
+                return {}
+
+            def upload_dicom(self, upload_url: str, content: bytes) -> str:
+                self.uploads.append((upload_url, content))
+                return "drive-file-id-12345"
+
+        class FakeState:
+            def __init__(self) -> None:
+                self.dicom_marked: list[str] = []
+
+            def completed(self, _source_key: str) -> bool:
+                return True
+
+            def dicoms_completed(self, _source_key: str) -> bool:
+                return False
+
+            def mark_completed(self, _source_key: str) -> None:
+                pass
+
+            def mark_dicoms_completed(self, source_key: str) -> None:
+                self.dicom_marked.append(source_key)
+
+        config = bridge.BridgeConfig(
+            orthanc_url="http://127.0.0.1:8042",
+            orthanc_username="bridge",
+            orthanc_password="secret",
+            apps_script_url="https://script.google.com/macros/s/deployment-id/exec",
+            bridge_id="ORTHANC_TEST",
+            bridge_key="a" * 96,
+            upload_original_dicoms=True,
+            max_dicom_instances_per_study=10,
+        )
+        study = {
+            "ID": "study-1",
+            "MainDicomTags": {"StudyInstanceUID": "1.2.3", "StudyDate": "20260913"},
+        }
+        webapp = FakeWebApp()
+        state = FakeState()
+        with patch.object(bridge, "instance_references", return_value=[("series-1", "instance-1")]):
+            bridge.sync_study(config, FakeOrthanc(), webapp, state, study)
+
+        self.assertEqual(webapp.uploads, [(
+            "https://www.googleapis.com/upload/drive/v3/files?upload_id=test",
+            raw_dicom,
+        )])
+        prepared = next(values["dicom"] for action, values in webapp.calls if action == "prepare_dicom_upload")
+        self.assertEqual(prepared["sha256_hash"], bridge.hashlib.sha256(raw_dicom).hexdigest())
+        self.assertEqual(prepared["sequence_number"], 1)
+        self.assertEqual(len(state.dicom_marked), 1)
 
 
 if __name__ == "__main__":

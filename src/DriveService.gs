@@ -4,7 +4,7 @@ function createClaimFolder_(claimCode) {
   assert_(!existing.hasNext(), 'CLAIM_FOLDER_EXISTS', 'Folder untuk kode klaim ini sudah ada. Silakan coba kembali.');
   var folder = root.createFolder(claimCode);
   try {
-    ['USG', 'KTP', 'BUKU_KIA', 'SPP_FKPP_BPJS', 'OTHER', 'THUMBNAILS', 'OUTPUT'].forEach(function (name) {
+    ['USG', 'KTP', 'BUKU_KIA', 'SPP_FKPP_BPJS', 'OTHER', 'DICOM', 'THUMBNAILS', 'OUTPUT'].forEach(function (name) {
       folder.createFolder(name);
     });
   } catch (error) {
@@ -25,7 +25,7 @@ function trashEmptyClaimFolder_(folder) {
 
 function getClaimSubfolder_(claim, folderName) {
   var allowed = Object.keys(DOCUMENT_TYPES).map(function (key) { return DOCUMENT_TYPES[key]; })
-    .concat(['THUMBNAILS', 'OUTPUT']);
+    .concat(['DICOM', 'THUMBNAILS', 'OUTPUT']);
   assert_(allowed.indexOf(folderName) >= 0, 'INVALID_CLAIM_FOLDER', 'Folder berkas tidak valid.');
   var claimFolder;
   try {

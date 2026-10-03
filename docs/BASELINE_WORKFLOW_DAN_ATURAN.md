@@ -1,10 +1,10 @@
-# Baseline Workflow, Logika, dan Aturan BPJS USG
+# Baseline Workflow, Logika, dan Aturan Sistem Klaim USG BPJS
 
 ## 1. Identitas dokumen
 
 | Item | Nilai |
 |---|---|
-| Aplikasi | BPJS USG Online Claim App |
+| Aplikasi | Sistem Klaim USG BPJS |
 | Versi baseline | `5.0.0-orthanc-bridge` |
 | Tanggal baseline | 13 September 2026 |
 | Lingkup | Satu Puskesmas, Google Apps Script, Google Sheets, Google Drive, dan Orthanc lokal |
@@ -406,7 +406,7 @@ Perintah melakukan satu siklus sinkronisasi lalu berhenti.
 powershell -ExecutionPolicy Bypass -File .\run-continuous.ps1
 ```
 
-Bridge melakukan polling sesuai `poll_seconds`, default 60 detik.
+Bridge melakukan polling sesuai `poll_seconds`, default 600 detik (10 menit).
 
 ### 13.3 Menjalankan otomatis
 
@@ -451,7 +451,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-startup-task.ps1
 | `bridge_id` | Disalin dari menu Sistem |
 | `bridge_key` | Disalin sekali dari menu Sistem dan harus dirahasiakan |
 | `lookback_days` | Default 2; valid 1-30 hari berdasarkan `StudyDate` |
-| `poll_seconds` | Default 60; valid 15-3600 detik |
+| `poll_seconds` | Default 600 (10 menit); valid 15-3600 detik |
 | `max_images_per_study` | Default 30; valid 1-30 |
 | `max_frames_per_instance` | Default 1; valid 1-30 |
 | `verify_tls` | Wajib `true` untuk koneksi Apps Script |

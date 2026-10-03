@@ -36,7 +36,7 @@ function renderAccessDenied_(error) {
   var denied = HtmlService.createTemplateFromFile('AccessDenied');
   denied.errorMessage = error && error.message ? error.message : 'Aplikasi tidak dapat dimuat.';
   return denied.evaluate()
-    .setTitle('BPJS USG')
+    .setTitle(APP_CONFIG.APP_NAME)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -73,32 +73,62 @@ function sanitizeClaimId_(claimId) {
 function getAppBootstrap(sessionToken) {
   try {
     var user = requireAuthenticatedUser(sessionToken, true);
-    var facility = user.facility_id ? findRecord_('FACILITIES', 'facility_id', user.facility_id) : null;
-    return success_({
-      appName: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.APP_NAME),
-      appVersion: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.APP_VERSION),
-      authMode: user._authMode,
-      mustChangePassword: Boolean(user._mustChangePassword),
-      features: {
-        mobile_qr_upload: getBooleanSetting_('ENABLE_MOBILE_QR_UPLOAD', false),
-        orthanc_bridge: getBooleanSetting_('ENABLE_ORTHANC_BRIDGE', false) &&
-          Boolean(normalizeString_(getScriptProperties_().getProperty(SCRIPT_PROPERTY_KEYS.ORTHANC_BRIDGE_SECRET_HASH)))
-      },
-      user: {
-        user_id: user.user_id,
-        google_email: user.google_email,
-        full_name: user.full_name,
-        role: user.role,
-        facility_id: user.facility_id,
-        facility_name: facility ? facility.facility_name : '',
-        can_create_claim: user.role === ROLES.ADMIN || Boolean(user.can_create_claim),
-        can_view_all_claims: user.role === ROLES.ADMIN || Boolean(user.can_view_all_claims),
-        can_generate_pdf: user.role === ROLES.ADMIN || Boolean(user.can_generate_pdf),
-        can_download_pdf: user.role === ROLES.ADMIN || Boolean(user.can_download_pdf),
-        can_manage_users: user.role === ROLES.ADMIN
-      }
-    });
+    return success_(buildAppBootstrap_(user));
   } catch (error) {
     return publicError_(error);
+  }
+}
+
+function buildAppBootstrap_(user) {
+  var facility = user.facility_id ? findRecord_('FACILITIES', 'facility_id', user.facility_id) : null;
+  var settings = readAllRecords_('SETTINGS');
+  var settingValues = {};
+  settings.forEach(function (setting) {
+    var key = normalizeString_(setting.setting_key);
+    if (key && !Object.prototype.hasOwnProperty.call(settingValues, key)) {
+      settingValues[key] = setting.setting_value;
+    }
+  });
+  var mobileQrEnabled = Object.prototype.hasOwnProperty.call(settingValues, 'ENABLE_MOBILE_QR_UPLOAD')
+    ? normalizeBoolean_(settingValues.ENABLE_MOBILE_QR_UPLOAD)
+    : false;
+  var orthancEnabled = Object.prototype.hasOwnProperty.call(settingValues, 'ENABLE_ORTHANC_BRIDGE')
+    ? normalizeBoolean_(settingValues.ENABLE_ORTHANC_BRIDGE)
+    : false;
+  return {
+    appName: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.APP_NAME),
+    appVersion: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.APP_VERSION),
+    authMode: user._authMode,
+    mustChangePassword: Boolean(user._mustChangePassword),
+    features: {
+      mobile_qr_upload: mobileQrEnabled,
+      orthanc_bridge: orthancEnabled &&
+        Boolean(normalizeString_(getScriptProperties_().getProperty(SCRIPT_PROPERTY_KEYS.ORTHANC_BRIDGE_SECRET_HASH)))
+    },
+    user: {
+      user_id: user.user_id,
+      google_email: user.google_email,
+      full_name: user.full_name,
+      role: user.role,
+      facility_id: user.facility_id,
+      facility_name: facility ? facility.facility_name : '',
+      can_create_claim: user.role === ROLES.ADMIN || Boolean(user.can_create_claim),
+      can_view_all_claims: user.role === ROLES.ADMIN || Boolean(user.can_view_all_claims),
+      can_generate_pdf: user.role === ROLES.ADMIN || Boolean(user.can_generate_pdf),
+      can_download_pdf: user.role === ROLES.ADMIN || Boolean(user.can_download_pdf),
+      can_manage_users: user.role === ROLES.ADMIN
+    }
+  };
+}
+
+function tryBuildAppBootstrap_(user) {
+  try {
+    return buildAppBootstrap_(user);
+  } catch (error) {
+    console.warn(JSON.stringify({
+      code: 'AUTH_BOOTSTRAP_DEFERRED',
+      error_code: error && error.code ? error.code : 'UNEXPECTED_ERROR'
+    }));
+    return null;
   }
 }

@@ -19,6 +19,7 @@ function runSystemDiagnostics(sessionToken) {
     check('Folder penampungan Orthanc', function () { DriveApp.getFolderById(getRequiredProperty_(SCRIPT_PROPERTY_KEYS.ORTHANC_INBOX_FOLDER_ID)).getName(); });
     check('Akun administrator saat ini', function () { assert_(user.role === ROLES.ADMIN, 'NOT_ADMIN', 'Bukan administrator.'); });
     check('Rahasia pengaman kata sandi', function () { getRequiredProperty_(SCRIPT_PROPERTY_KEYS.PASSWORD_PEPPER); });
+    check('Rahasia kode nama file', function () { getRequiredProperty_(SCRIPT_PROPERTY_KEYS.FILENAME_CODE_SECRET); });
     check('Iterasi hash kata sandi', function () { getPasswordIterations_(); });
     check('Penguncian percobaan masuk', function () {
       assert_(Number(getRequiredProperty_(SCRIPT_PROPERTY_KEYS.LOGIN_MAX_ATTEMPTS)) >= 3, 'LOCKOUT_INVALID', 'LOGIN_MAX_ATTEMPTS terlalu kecil.');
@@ -34,6 +35,14 @@ function runSystemDiagnostics(sessionToken) {
         getRequiredProperty_(SCRIPT_PROPERTY_KEYS.ORTHANC_BRIDGE_SECRET_HASH);
       }
     });
+    check('Folder Drive cadangan', function () {
+      if (secondaryBackupEnabled_()) {
+        getSecondaryBackupRoot_().getName();
+        getSecondaryBackupSubfolder_(BACKUP_FOLDER_NAMES.RAW_DICOM).getName();
+        getSecondaryBackupSubfolder_(BACKUP_FOLDER_NAMES.DICOM).getName();
+        getSecondaryBackupSubfolder_(BACKUP_FOLDER_NAMES.CLAIMS).getName();
+      }
+    });
     writeAudit_(user, 'SYSTEM_DIAGNOSTICS_RUN', '', '', {
       passed: results.filter(function (item) { return item.ok; }).length,
       total: results.length
@@ -47,6 +56,7 @@ function runSystemDiagnostics(sessionToken) {
       mobileTokenMinutes: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.MOBILE_TOKEN_LIFETIME_MINUTES),
       maxDocumentsPerClaim: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.MAX_DOCUMENTS_PER_CLAIM),
       maxPdfSizeMb: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.MAX_PDF_SIZE_MB),
+      secondaryBackupEnabled: secondaryBackupEnabled_(),
       currentUser: user.google_email,
       checks: results
     });

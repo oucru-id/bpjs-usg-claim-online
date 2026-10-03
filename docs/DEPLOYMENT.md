@@ -12,6 +12,7 @@ Important:
 - add `ClaimService.gs` and `DriveService.gs`;
 - add `DocumentService.gs`, `TokenService.gs`, and `VendorQrCode.html`;
 - add `PdfService.gs`;
+- add `BackupService.gs`;
 - add `OrthancBridgeService.gs`;
 - delete the old `OAuthService.gs` from Apps Script;
 - replace every other `.gs` and `.html` file;
@@ -40,11 +41,13 @@ For an existing installation, setup also adds the `must_change_password` column 
 
 If a recognized new column already contains data but its header is blank, setup repairs the header only when its position maps unambiguously to the expected column. Ambiguous blank columns still fail closed without changing data.
 
-The new manifest requests Google Documents access because PDF composition uses a temporary private Google Doc. Review and approve this additional authorization when Google prompts the deploying administrator.
+The manifest requests Google Documents access for PDF composition and external-request access to initiate Google Drive resumable uploads for original DICOM files. Review and approve both when Google prompts the deploying administrator.
 
-For version 5, setup also creates `ORTHANC_INBOX`, `ORTHANC_IMAGES`, the private `SYSTEM/ORTHANC_INBOX` folder, and the Orthanc reference columns on `DOCUMENTS`.
+Version 6.1 adds raw-backup status columns to `ORTHANC_DICOMS` and copies every original DICOM to the second Drive independently of claim creation. Existing data is preserved.
 
-After a successful migration, the application header should display `5.0.0-orthanc-bridge`.
+Version 6.3 adds `patient_phone` to `CLAIMS`. Existing claim rows are preserved and receive an empty value; enter a No. HP before editing and saving an older claim.
+
+After a successful migration, the application header should display `6.5.0-anonymous-filenames`.
 
 After deployment, log in as administrator, open **Sistem**, and run **Jalankan Diagnostik**. The server-side self-test function requires an application session token and is not intended to be run directly from the Apps Script editor.
 
@@ -106,13 +109,13 @@ Any password reset performed from **Pengguna** is temporary and forces the user 
 
 ## 7. Test claim management
 
-Use clearly fictitious data only, for example `Pasien Demo` and NIK `0000000000000000`.
+Use clearly fictitious data only, for example `Pasien Demo`, NIK `0000000000000000`, and No. HP `081234567890`.
 
 1. Log in as STAFF and confirm all interface labels are in Bahasa Indonesia.
 2. Click **+ Buat Klaim Baru**, enter the demo patient data, and save.
-3. Confirm the generated code follows `CLAIM-YYYYMMDD-XXXXXX` and contains no patient name or NIK.
-4. Confirm the list masks the patient name and NIK.
-5. Open the claim and confirm the authorized detail displays the complete 16-digit NIK.
+3. Confirm the generated code follows `CLAIM-YYYYMMDD-XXXXXX` and contains no patient name, NIK, or No. HP.
+4. Confirm the list displays the complete patient name, NIK, and normalized No. HP for an authorized user.
+5. Open the claim and confirm the authorized detail displays the complete 16-digit NIK and No. HP.
 6. Edit it and select **Mulai Pengumpulan Berkas**.
 7. Confirm a private folder named only with the claim code exists below the configured `CLAIMS` folder and contains the standard subfolders.
 8. With a staff account from another facility, confirm the claim is not visible unless **Lihat semua klaim** was explicitly granted.
@@ -145,8 +148,8 @@ Continue using only fictitious documents.
 3. Drag document cards into a new order, reload, and confirm the order remains unchanged. Also test **Lebih awal** and **Lebih akhir**.
 4. Confirm **Buat PDF** remains unavailable until at least one Gambar USG is selected.
 5. Click **Buat PDF**, verify the mandatory same-patient confirmation, then create the PDF.
-6. Confirm the filename follows `BPJS_USG_CLAIM-..._v001.pdf` and the file exists only in the private `OUTPUT` folder.
-7. Confirm the PDF cover displays the complete 16-digit NIK.
+6. Confirm the Drive filename follows `KLAIM_F1<KODE>_v001.pdf`, the file exists only in the private `OUTPUT` folder, and downloading through the app restores `KLAIM_<Puskesmas>_<YYYYMMDD>_<NIK>_<NO_HP>_v001.pdf`.
+7. Confirm the PDF cover displays the complete 16-digit NIK and No. HP.
 8. Use **Pratinjau PDF** and **Unduh PDF** from the web app. Confirm the staff account still cannot open the Drive file directly.
 9. Create the PDF again and confirm version `v002` is created without overwriting `v001`.
 10. Click **Selesaikan Klaim** and confirm upload, rotation, selection, ordering, and deletion are locked.
@@ -165,14 +168,33 @@ Follow [ORTHANC_BRIDGE.md](ORTHANC_BRIDGE.md) using fictitious DICOM data.
 2. Run `orthanc-bridge/run-once.ps1` on the Orthanc PC.
 3. Confirm the examination appears as **Siap ditinjau** and that the claim has not yet been created.
 4. Confirm a non-16-digit `PatientID` does not automatically populate NIK.
-5. Review all metadata and select at least one image.
+5. Review all metadata, enter the No. HP manually, and select at least one image.
 6. Confirm the patient and create the claim.
 7. Confirm the claim opens as **Mengumpulkan berkas**, the selected USG images appear, and `DOCUMENTS.source_type` is `ORTHANC_IMPORT`.
-8. Confirm the Orthanc Study, Series, Instance, and frame identifiers are stored without appearing in public URLs or filenames.
+8. Confirm each original `.dcm` instance exists in the claim's private `DICOM` folder and the Orthanc Study, Series, Instance, and frame identifiers are stored without appearing in public URLs.
 9. Run the bridge again and confirm the same study is not duplicated.
 10. Review `AUDIT_LOG` for `ORTHANC_STUDY_RECEIVED` and `ORTHANC_CLAIM_IMPORTED`.
 
 Do not begin continuous synchronization until the one-time test has passed on the real Orthanc PC. Local automated tests do not prove connectivity to the clinic's Orthanc, Apps Script deployment, or DICOM codec compatibility.
+
+## 11. Configure and test the second Drive account
+
+1. In the approved backup account, create a private folder such as `BPJS_USG_BACKUP`.
+2. Share only that folder as **Editor** with the Google account that owns/deploys the Apps Script web app. Do not enable link sharing.
+3. Copy the folder ID from its Drive URL and add it in **Project Settings -> Script Properties** as `BACKUP_DRIVE_FOLDER_ID`.
+4. Run `setupApplication()` again so the new schema and setting exist.
+5. Run `validateSecondaryBackupConfiguration()` directly from the Apps Script editor and approve authorization if requested. It creates/validates private `DICOM RAW`, `DICOM`, and `KLAIM` subfolders and enables backup.
+6. Run OrthancBridge without creating a claim and confirm every original file appears in `DICOM RAW` as `DICOM_RAW_F1<KODE>.dcm`.
+7. Create a claim from a fictitious Orthanc study. Confirm the claim-linked files are named `DICOM_F1<KODE>[_NNN].dcm` in both the primary claim folder and backup `DICOM` folder.
+8. Generate its PDF and confirm the second Drive contains `KLAIM_F1<KODE>.pdf`.
+9. Regenerate the PDF and confirm the named backup is replaced by the latest version rather than duplicated.
+10. Run **Sistem -> Jalankan Diagnostik** and confirm `Folder Drive cadangan` is `OK`.
+11. Run `backupExistingClaimFiles()` repeatedly until `rawDicomReady`, `dicomReady`, and `pdfReady` are zero to anonymize and backfill existing files in bounded batches.
+12. In the private Spreadsheet, verify each PDF/DICOM row contains the logical/original filename, anonymous storage filename, and its primary/backup Drive URL. Do not expose these URLs in the staff UI.
+
+`setupApplication()` creates `FILENAME_CODE_SECRET` once. Never edit, rotate, or delete this property without a controlled migration because it determines the stable anonymous codes.
+
+Do not paste the second account's password or credential JSON into Apps Script, `config.json`, chat, or Git. Folder-level sharing is sufficient for this design.
 
 ## Removing the unused Google OAuth configuration
 

@@ -6,10 +6,11 @@ OrthancBridge adalah program pendamping pada PC Puskesmas. Program ini hanya mem
 
 1. Alat USG mengirim DICOM ke Orthanc.
 2. OrthancBridge mencari studi terbaru yang sudah stabil.
-3. Metadata pasien dibaca dari tag DICOM dan preview gambar dikonversi menjadi JPEG.
-4. Data masuk ke **Kotak Masuk Orthanc** pada web app.
-5. Petugas meninjau nama, NIK, tanggal lahir, tanggal pemeriksaan, dan gambar.
-6. Setelah konfirmasi, aplikasi membuat klaim dengan status **Mengumpulkan berkas** dan menyalin gambar USG ke folder privat klaim.
+3. Metadata pasien dibaca dari tag DICOM, preview gambar dikonversi menjadi JPEG, dan setiap instance DICOM asli diunggah secara resumable ke Drive privat.
+4. Data masuk ke **Kotak Masuk Orthanc** pada web app; setiap DICOM asli langsung disalin ke subfolder `DICOM RAW` pada Drive cadangan tanpa menunggu klaim dikonfirmasi.
+5. Petugas meninjau nama, NIK, mengisi No. HP, lalu memeriksa tanggal lahir, tanggal pemeriksaan, dan gambar.
+6. Setelah konfirmasi, aplikasi membuat klaim dengan status **Mengumpulkan berkas**, menyalin gambar USG, dan memindahkan salinan DICOM asli ke subfolder privat `DICOM` milik klaim.
+7. Jika backup Drive kedua diaktifkan, salinan terkait klaim disimpan terpisah di `DICOM`, dan PDF klaim disimpan di `KLAIM`.
 
 Bridge tidak langsung membuat klaim. Konfirmasi petugas wajib karena `PatientID` dapat berisi nomor rekam medis dan bukan NIK.
 
@@ -19,9 +20,9 @@ Bridge tidak langsung membuat klaim. Konfirmasi petugas wajib karena `PatientID`
 2. Jalankan `setupApplication()` sebagai administrator pemasang.
 3. Pastikan hasil setup memuat sheet `ORTHANC_INBOX` dan `ORTHANC_IMAGES`.
 4. Buat deployment web app versi baru.
-5. Muat ulang URL `/exec` dan pastikan versi `5.0.0-orthanc-bridge` tampil.
+5. Muat ulang URL `/exec` dan pastikan versi `6.5.0-anonymous-filenames` tampil.
 
-Setup menambah kolom referensi Orthanc pada `DOCUMENTS`, dua sheet baru, serta folder privat `SYSTEM/ORTHANC_INBOX`. Setup tidak menghapus klaim atau dokumen lama. Karena versi aplikasi berubah, sesi lama dicabut satu kali dan pengguna perlu masuk kembali.
+Setup menambah kolom `patient_phone` pada `CLAIMS`, kolom referensi Orthanc pada `DOCUMENTS`, sheet `ORTHANC_INBOX`, `ORTHANC_IMAGES`, dan `ORTHANC_DICOMS`, serta folder privat `SYSTEM/ORTHANC_INBOX`. Setup tidak menghapus klaim atau dokumen lama. Karena versi aplikasi berubah, sesi lama dicabut satu kali dan pengguna perlu masuk kembali.
 
 ## 2. Buat kunci koneksi
 
@@ -97,12 +98,27 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-startup-task.ps1
 
 PC Orthanc dan akun Windows yang menjalankan task harus tetap menyala serta memiliki koneksi internet.
 
+Konfigurasi baru berikut bersifat opsional karena mempunyai nilai bawaan. Tambahkan secara eksplisit bila ingin mengubah batasnya:
+
+```json
+{
+  "poll_seconds": 600,
+  "upload_original_dicoms": true,
+  "max_dicom_instances_per_study": 100
+}
+```
+
+Nilai `poll_seconds: 600` berarti OrthancBridge memeriksa studi baru setiap 10 menit.
+
+Bridge mengambil `/instances/{id}/file` dari Orthanc dan mengirim byte DICOM asli langsung ke sesi unggah Google Drive. DICOM tidak dimasukkan ke log dan tidak dikonversi sebelum disimpan. Jangan mematikan `upload_original_dicoms` kecuali untuk pemulihan masalah sementara.
+
 ## Pemetaan metadata
 
 | Tag DICOM | Isian web app | Aturan |
 |---|---|---|
 | `PatientName` | Nama pasien | Tanda `^` diubah menjadi spasi; petugas wajib memeriksa |
 | `PatientID` | Calon NIK | Diisi otomatis hanya jika menghasilkan tepat 16 angka |
+| Tidak tersedia | No. HP | Wajib diisi dan diperiksa manual oleh petugas |
 | `PatientBirthDate` | Tanggal lahir | Jika kosong/tidak valid harus diisi petugas |
 | `StudyDate` | Tanggal pemeriksaan USG | Jika kosong/tidak valid harus diisi petugas |
 | `StudyInstanceUID` | Identitas pemeriksaan | Digunakan untuk mencegah studi yang sama diimpor dua kali |
@@ -114,6 +130,15 @@ Secara default `max_frames_per_instance` adalah `1`. Artinya satu preview diambi
 
 Jika alat menghasilkan cine multi-frame, menaikkan nilai tersebut dapat menghasilkan banyak gambar yang hampir sama. Uji menggunakan data fiktif dan tetap pilih gambar yang benar pada dialog impor. Jumlah akhir dibatasi oleh `max_images_per_study` dan batas dokumen klaim.
 
+Satu instance multi-frame tetap disimpan sebagai satu DICOM asli. Nama fisik di Drive menggunakan kode anonim stabil. Bila studi berisi beberapa instance, nama akhirnya menggunakan nomor urut agar tidak bertabrakan:
+
+```text
+DICOM_F1<KODE>_001.dcm
+DICOM_F1<KODE>_002.dcm
+```
+
+Untuk satu instance, nomor urut tidak ditambahkan. Nama logis lama yang memuat Puskesmas, tanggal pemeriksaan, NIK, dan No. HP tidak dipakai sebagai nama fisik Drive; nama itu direkonstruksi dari kolom privat `claim_filename`/`backup_filename`. URL dan nama penyimpanan anonim dicatat pada baris `ORTHANC_DICOMS`.
+
 ## Pemulihan masalah
 
 - `ORTHANC_BRIDGE_DISABLED`: aktifkan bridge pada menu Sistem.
@@ -122,5 +147,7 @@ Jika alat menghasilkan cine multi-frame, menaikkan nilai tersebut dapat menghasi
 - pemeriksaan tidak muncul: pastikan studi berada dalam `lookback_days`, berstatus stabil, dan mempunyai gambar yang dapat dipreview Orthanc.
 - data lama tidak dikirim ulang setelah database web app dibuat ulang: hentikan bridge, cadangkan lalu hapus `state.json`, dan jalankan `run-once.ps1`.
 - gambar dilewati: periksa dukungan codec DICOM pada Orthanc dan log bridge.
+- `DICOM_UPLOAD_SESSION_FAILED`: deployment belum menerima scope `script.external_request`, Drive penuh, atau deployment lama masih aktif; buat versi deployment baru dan otorisasi ulang.
+- DICOM asli terus dicoba ulang: periksa koneksi internet, akses Drive deployment, dan kolom `raw_backup_status`/`raw_backup_error` tanpa menyalin data pasien ke chat.
 
 Jangan pernah menghapus atau mengubah baris pada `ORTHANC_INBOX`, `ORTHANC_IMAGES`, atau `DOCUMENTS` secara manual saat bridge sedang berjalan.

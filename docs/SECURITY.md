@@ -44,8 +44,8 @@ PDF generation uses a temporary private Google Doc owned by the deploying admini
 
 - Every claim list/detail/create/update/status/archive endpoint authenticates on the server.
 - Staff access is restricted by facility unless an administrator explicitly grants **Lihat semua klaim**.
-- The claim list masks patient names and NIK. Full NIK is returned only after claim-access authorization and is shown in claim detail and the generated PDF cover for the operational BPJS workflow.
-- Claim codes and Drive folder names never contain patient names, NIK, or birth dates.
+- The claim list remains access-filtered by role and facility and displays complete patient names, NIK, and No. HP values to authenticated users who can access those claims. The Orthanc inbox displays the complete patient name and DICOM PatientID only to users with claim-creation permission.
+- Claim codes and Drive folder names never contain patient names, NIK, No. HP, or birth dates.
 - Claims are archived rather than permanently deleted.
 - Audit details contain claim codes/statuses, not full patient payloads.
 
@@ -54,7 +54,7 @@ PDF generation uses a temporary private Google Doc owned by the deploying admini
 - Gambar diperkecil di browser dan dikirim satu per satu; server membatasi ukuran hasil optimasi hingga 6 MB.
 - Server hanya menerima JPEG/PNG, memeriksa tanda tangan byte berkas, dimensi, jenis dokumen, dan batas jumlah dokumen.
 - SHA-256 digunakan untuk menolak gambar duplikat yang masih aktif dalam klaim yang sama.
-- Nama berkas Drive dibuat dari jenis dokumen dan UUID, bukan nama pasien atau NIK.
+- Nama berkas gambar pendukung dibuat dari jenis dokumen dan UUID. Nama fisik DICOM dan PDF di Drive memakai kode HMAC anonim berbasis ID internal dan `FILENAME_CODE_SECRET`; nama logis yang memuat identitas hanya disimpan bersama URL pada database privat untuk rekonstruksi. Seluruh folder utama, database, dan backup tetap wajib privat dan tidak boleh dibagikan melalui tautan publik.
 - Foto berkas pendukung dari ponsel diperkecil di browser tanpa dipotong ke batas lanskap 1280 x 720 atau potret 720 x 1280. Server menolak unggahan baru yang melewati batas tersebut; gambar USG dari komputer memakai batas terpisah agar detail klinis tidak ikut diturunkan.
 - Thumbnail dan pratinjau dikirim sebagai Base64 hanya setelah otorisasi server; aplikasi tidak memberikan URL Drive.
 - Token ponsel terdiri dari nilai acak 96 karakter; hanya hash token yang disimpan pada `CLAIMS`.
@@ -70,7 +70,7 @@ PDF generation uses a temporary private Google Doc owned by the deploying admini
 - Administrator membuat kunci acak 96 karakter. Apps Script hanya menyimpan hash SHA-256 kunci; nilai asli ditampilkan satu kali untuk disimpan pada `config.json` di PC Orthanc.
 - ID bridge dan kunci diperiksa menggunakan pembandingan waktu-konstan sebelum metadata atau gambar diproses.
 - Bridge mengirim gambar satu per satu. Server memeriksa jenis JPEG, tanda tangan byte, ukuran, dimensi, dan identitas studi sebelum menyimpannya pada folder penampungan privat.
-- Nama pasien, NIK, dan gambar tidak ditulis ke log bridge atau detail audit.
+- Nama pasien, NIK, No. HP, dan gambar tidak ditulis ke log bridge atau detail audit.
 - Daftar kotak masuk menyamarkan identitas. Data lengkap dan thumbnail hanya diberikan setelah sesi aplikasi mempunyai izin membuat klaim.
 - Klaim tidak dibuat otomatis. Petugas wajib memeriksa data pasien, memilih gambar, dan mencentang konfirmasi pasien.
 - `StudyInstanceUID`, ID study/series/instance Orthanc, serta indeks frame disimpan untuk mencegah impor berulang dan menjaga ketertelusuran.

@@ -1,7 +1,14 @@
+var DATABASE_CONNECTION_CACHE_ = { id: '', spreadsheet: null };
+
 function getDatabase_() {
   var id = getRequiredProperty_(SCRIPT_PROPERTY_KEYS.DATABASE_SPREADSHEET_ID);
+  if (DATABASE_CONNECTION_CACHE_.id === id && DATABASE_CONNECTION_CACHE_.spreadsheet) {
+    return DATABASE_CONNECTION_CACHE_.spreadsheet;
+  }
   try {
-    return SpreadsheetApp.openById(id);
+    var spreadsheet = SpreadsheetApp.openById(id);
+    DATABASE_CONNECTION_CACHE_ = { id: id, spreadsheet: spreadsheet };
+    return spreadsheet;
   } catch (error) {
     throw appError_('DATABASE_UNAVAILABLE', 'Database aplikasi tidak dapat dibuka.');
   }

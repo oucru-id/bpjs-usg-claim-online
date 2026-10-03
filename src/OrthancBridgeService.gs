@@ -6,6 +6,8 @@ function receiveOrthancBridgeRequest_(payload) {
   }
   if (action === 'upsert_study') return success_(upsertOrthancStudy_(bridge, payload.study || {}));
   if (action === 'upload_image') return success_(receiveOrthancImage_(bridge, payload.image || {}));
+  if (action === 'prepare_dicom_upload') return success_(prepareOriginalDicomUpload_(bridge, payload.dicom || {}));
+  if (action === 'complete_dicom_upload') return success_(completeOriginalDicomUpload_(bridge, payload.dicom || {}));
   if (action === 'finalize_study') return success_(finalizeOrthancStudy_(bridge, payload.study || {}));
   throw appError_('BRIDGE_ACTION_INVALID', 'Tindakan OrthancBridge tidak dikenal.');
 }
@@ -109,10 +111,25 @@ function upsertOrthancStudy_(bridge, studyPayload) {
     var existing = findRecord_('ORTHANC_INBOX', 'source_key', identifiers.source_key);
     if (existing && [ORTHANC_INBOX_STATUSES.READY, ORTHANC_INBOX_STATUSES.IMPORTED, ORTHANC_INBOX_STATUSES.REJECTED]
       .indexOf(normalizeString_(existing.status).toUpperCase()) >= 0) {
+      var terminalStatus = normalizeString_(existing.status).toUpperCase();
+      var expectedDicoms = boundedInteger_(studyPayload.expected_dicoms, 0, 1000,
+        Number(existing.expected_dicoms) || 0);
+      var receivedDicoms = orthancDicomsForInbox_(existing.inbox_id).filter(function (dicom) {
+        return ['READY', 'ATTACHED'].indexOf(normalizeString_(dicom.status).toUpperCase()) >= 0;
+      }).length;
+      if (expectedDicoms !== Number(existing.expected_dicoms || 0) || receivedDicoms !== Number(existing.received_dicoms || 0)) {
+        updateRecord_('ORTHANC_INBOX', existing._rowNumber, {
+          expected_dicoms: expectedDicoms,
+          received_dicoms: receivedDicoms,
+          updated_at: now_()
+        });
+      }
       return {
         inbox_id: normalizeString_(existing.inbox_id),
-        status: normalizeString_(existing.status).toUpperCase(),
-        should_upload: false
+        status: terminalStatus,
+        should_upload: false,
+        should_upload_images: false,
+        should_upload_dicoms: terminalStatus !== ORTHANC_INBOX_STATUSES.REJECTED && receivedDicoms < expectedDicoms
       };
     }
     var timestamp = now_();
@@ -120,24 +137,40 @@ function upsertOrthancStudy_(bridge, studyPayload) {
       var changes = Object.assign({}, identifiers, {
         status: ORTHANC_INBOX_STATUSES.RECEIVING,
         expected_images: boundedInteger_(studyPayload.expected_images, 0, 100, 0),
+        expected_dicoms: boundedInteger_(studyPayload.expected_dicoms, 0, 1000, 0),
         bridge_message: '',
         updated_at: timestamp
       });
       delete changes.source_key;
       updateRecord_('ORTHANC_INBOX', existing._rowNumber, changes);
-      return { inbox_id: normalizeString_(existing.inbox_id), status: ORTHANC_INBOX_STATUSES.RECEIVING, should_upload: true };
+      return {
+        inbox_id: normalizeString_(existing.inbox_id),
+        status: ORTHANC_INBOX_STATUSES.RECEIVING,
+        should_upload: true,
+        should_upload_images: true,
+        should_upload_dicoms: true
+      };
     }
     var inboxId = Utilities.getUuid();
     appendRecord_('ORTHANC_INBOX', Object.assign({}, identifiers, {
       inbox_id: inboxId,
       status: ORTHANC_INBOX_STATUSES.RECEIVING,
       expected_images: boundedInteger_(studyPayload.expected_images, 0, 100, 0),
+      expected_dicoms: boundedInteger_(studyPayload.expected_dicoms, 0, 1000, 0),
       received_images: 0,
       skipped_images: 0,
+      received_dicoms: 0,
+      skipped_dicoms: 0,
       received_at: timestamp,
       updated_at: timestamp
     }));
-    return { inbox_id: inboxId, status: ORTHANC_INBOX_STATUSES.RECEIVING, should_upload: true };
+    return {
+      inbox_id: inboxId,
+      status: ORTHANC_INBOX_STATUSES.RECEIVING,
+      should_upload: true,
+      should_upload_images: true,
+      should_upload_dicoms: true
+    };
   });
 }
 
@@ -215,18 +248,182 @@ function receiveOrthancImage_(bridge, imagePayload) {
   return { image_id: imageId, duplicate: false };
 }
 
+function prepareOriginalDicomUpload_(bridge, dicomPayload) {
+  var studySourceKey = orthancStudySourceKey_(bridge.bridgeId,
+    dicomPayload.study_instance_uid, dicomPayload.orthanc_study_id);
+  var inbox = findRecord_('ORTHANC_INBOX', 'source_key', studySourceKey);
+  assert_(inbox, 'ORTHANC_STUDY_NOT_FOUND', 'Pemeriksaan Orthanc belum didaftarkan.');
+  assert_(normalizeString_(inbox.status).toUpperCase() !== ORTHANC_INBOX_STATUSES.REJECTED,
+    'ORTHANC_STUDY_REJECTED', 'Pemeriksaan Orthanc sudah ditolak.');
+  var instanceId = sanitizeOrthancIdentifier_(dicomPayload.orthanc_instance_id, 120, 'ID instance Orthanc');
+  var seriesId = sanitizeOrthancIdentifier_(dicomPayload.orthanc_series_id, 120, 'ID series Orthanc');
+  var sourceKey = normalizeString_(inbox.inbox_id) + '|' + instanceId;
+  var fileSize = Number(dicomPayload.file_size_bytes);
+  assert_(Number.isSafeInteger(fileSize) && fileSize > 0 && fileSize <= UPLOAD_LIMITS.MAX_DICOM_BYTES,
+    'DICOM_SIZE_INVALID', 'Ukuran DICOM asli tidak valid atau melebihi 2 GB.');
+  var sha256 = normalizeString_(dicomPayload.sha256_hash).toLowerCase();
+  assert_(/^[0-9a-f]{64}$/.test(sha256), 'DICOM_HASH_INVALID', 'Hash DICOM asli tidak valid.');
+  var sequence = boundedInteger_(dicomPayload.sequence_number, 1, 1000, 1);
+  var existing = findRecord_('ORTHANC_DICOMS', 'source_key', sourceKey);
+  if (existing && ['READY', 'ATTACHED'].indexOf(normalizeString_(existing.status).toUpperCase()) >= 0) {
+    var existingFile = accessibleDriveFile_(existing.claim_drive_file_id) || accessibleDriveFile_(existing.staging_drive_file_id);
+    if (existingFile && Number(existingFile.getSize()) === fileSize && normalizeString_(existing.sha256_hash) === sha256) {
+      var existingRawBackup = backupRawOriginalDicomSafely_(existing);
+      assert_(!secondaryBackupEnabled_() || existingRawBackup.status === 'READY',
+        'RAW_DICOM_BACKUP_FAILED', existingRawBackup.message || 'Backup DICOM raw belum berhasil.');
+      return {
+        dicom_id: normalizeString_(existing.dicom_id),
+        should_upload: false,
+        duplicate: true,
+        raw_backup_status: existingRawBackup.status
+      };
+    }
+  }
+  var dicomId = existing ? normalizeString_(existing.dicom_id) : Utilities.getUuid();
+  var storedFilename = rawDicomBackupFilename_({ dicom_id: dicomId });
+  var folders = getOrthancInboxFolders_(inbox.inbox_id);
+  var uploadUrl = createDriveResumableUpload_(folders.dicoms, storedFilename, fileSize);
+  var values = {
+    inbox_id: inbox.inbox_id,
+    source_key: sourceKey,
+    orthanc_instance_id: instanceId,
+    orthanc_series_id: seriesId,
+    sop_instance_uid: sanitizeOrthancIdentifier_(dicomPayload.sop_instance_uid, 160, 'SOP Instance UID', true),
+    sequence_number: sequence,
+    status: 'UPLOADING',
+    original_filename: sanitizeFilename_(dicomPayload.original_filename || (instanceId + '.dcm')),
+    stored_filename: storedFilename,
+    file_size_bytes: fileSize,
+    sha256_hash: sha256,
+    backup_status: normalizeString_(existing && existing.backup_status) || 'PENDING',
+    backup_error: '',
+    raw_backup_status: normalizeString_(existing && existing.raw_backup_status) ||
+      (secondaryBackupEnabled_() ? 'PENDING' : 'DISABLED'),
+    raw_backup_error: ''
+  };
+  withScriptLock_(function () {
+    var current = findRecord_('ORTHANC_DICOMS', 'source_key', sourceKey);
+    if (current) {
+      updateRecord_('ORTHANC_DICOMS', current._rowNumber, values);
+    } else {
+      values.dicom_id = dicomId;
+      appendRecord_('ORTHANC_DICOMS', values);
+    }
+  });
+  return { dicom_id: dicomId, upload_url: uploadUrl, should_upload: true };
+}
+
+function createDriveResumableUpload_(folder, filename, fileSize) {
+  var endpoint = 'https://www.googleapis.com/upload/drive/v3/files' +
+    '?uploadType=resumable&supportsAllDrives=true&fields=id,name,size,mimeType,parents';
+  var response = UrlFetchApp.fetch(endpoint, {
+    method: 'post',
+    contentType: 'application/json; charset=UTF-8',
+    headers: {
+      Authorization: 'Bearer ' + ScriptApp.getOAuthToken(),
+      'X-Upload-Content-Type': 'application/dicom',
+      'X-Upload-Content-Length': String(fileSize)
+    },
+    payload: JSON.stringify({
+      name: filename,
+      mimeType: 'application/dicom',
+      parents: [folder.getId()]
+    }),
+    muteHttpExceptions: true
+  });
+  var code = response.getResponseCode();
+  assert_(code >= 200 && code < 300, 'DICOM_UPLOAD_SESSION_FAILED',
+    'Google Drive tidak dapat menyiapkan sesi unggah DICOM. HTTP ' + code + '.');
+  var headers = response.getAllHeaders();
+  var location = normalizeString_(headers.Location || headers.location);
+  assert_(location && /^https:\/\/(?:[^/]+\.)?googleapis\.com\//i.test(location),
+    'DICOM_UPLOAD_SESSION_INVALID', 'Google Drive tidak memberikan URL unggah DICOM yang valid.');
+  return location;
+}
+
+function completeOriginalDicomUpload_(bridge, dicomPayload) {
+  var studySourceKey = orthancStudySourceKey_(bridge.bridgeId,
+    dicomPayload.study_instance_uid, dicomPayload.orthanc_study_id);
+  var inbox = findRecord_('ORTHANC_INBOX', 'source_key', studySourceKey);
+  assert_(inbox, 'ORTHANC_STUDY_NOT_FOUND', 'Pemeriksaan Orthanc belum didaftarkan.');
+  var dicomId = normalizeString_(dicomPayload.dicom_id);
+  assert_(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(dicomId),
+    'DICOM_ID_INVALID', 'Identitas unggahan DICOM tidak valid.');
+  var record = findRecord_('ORTHANC_DICOMS', 'dicom_id', dicomId);
+  assert_(record && normalizeString_(record.inbox_id) === normalizeString_(inbox.inbox_id),
+    'DICOM_UPLOAD_NOT_FOUND', 'Catatan unggahan DICOM tidak ditemukan.');
+  var driveFileId = sanitizeOrthancIdentifier_(dicomPayload.drive_file_id, 120, 'ID file Drive');
+  var file = accessibleDriveFile_(driveFileId);
+  assert_(file, 'DICOM_UPLOAD_FILE_MISSING', 'DICOM yang diunggah tidak ditemukan di Google Drive.');
+  var folders = getOrthancInboxFolders_(inbox.inbox_id);
+  assert_(driveFileBelongsToFolder_(file, folders.dicoms.getId()), 'DICOM_UPLOAD_FOLDER_INVALID',
+    'DICOM yang diunggah tidak berada dalam folder penampungan yang benar.');
+  assert_(Number(file.getSize()) === Number(record.file_size_bytes), 'DICOM_UPLOAD_SIZE_MISMATCH',
+    'Ukuran DICOM di Google Drive berbeda dari sumber Orthanc.');
+  file.setName(normalizeString_(record.stored_filename));
+  var previousStagingId = normalizeString_(record.staging_drive_file_id);
+  withScriptLock_(function () {
+    var current = findRecord_('ORTHANC_DICOMS', 'dicom_id', dicomId);
+    assert_(current, 'DICOM_UPLOAD_NOT_FOUND', 'Catatan unggahan DICOM tidak ditemukan.');
+    updateRecord_('ORTHANC_DICOMS', current._rowNumber, {
+      status: 'READY',
+      staging_drive_file_id: file.getId(),
+      staging_drive_url: file.getUrl(),
+      received_at: now_()
+    });
+    var currentInbox = findRecord_('ORTHANC_INBOX', 'inbox_id', inbox.inbox_id);
+    updateRecord_('ORTHANC_INBOX', currentInbox._rowNumber, {
+      received_dicoms: readyOrthancDicomsForInbox_(inbox.inbox_id).length,
+      updated_at: now_()
+    });
+  });
+  if (previousStagingId && previousStagingId !== file.getId()) trashDriveFileById_(previousStagingId);
+  var refreshedRecord = findRecord_('ORTHANC_DICOMS', 'dicom_id', dicomId);
+  var rawBackup = backupRawOriginalDicomSafely_(refreshedRecord || record);
+  assert_(!secondaryBackupEnabled_() || rawBackup.status === 'READY',
+    'RAW_DICOM_BACKUP_FAILED', rawBackup.message || 'Backup DICOM raw belum berhasil.');
+  var refreshedInbox = findRecord_('ORTHANC_INBOX', 'inbox_id', inbox.inbox_id);
+  if (normalizeString_(refreshedInbox.claim_id)) attachOriginalDicomsToExistingClaim_(refreshedInbox);
+  return {
+    dicom_id: dicomId,
+    duplicate: false,
+    received: true,
+    raw_backup_status: rawBackup.status
+  };
+}
+
+function driveFileBelongsToFolder_(file, folderId) {
+  var parents = file.getParents();
+  while (parents.hasNext()) {
+    if (parents.next().getId() === folderId) return true;
+  }
+  return false;
+}
+
 function finalizeOrthancStudy_(bridge, studyPayload) {
   var sourceKey = orthancStudySourceKey_(bridge.bridgeId, studyPayload.study_instance_uid, studyPayload.orthanc_study_id);
   var result = withScriptLock_(function () {
     var inbox = findRecord_('ORTHANC_INBOX', 'source_key', sourceKey);
     assert_(inbox, 'ORTHANC_STUDY_NOT_FOUND', 'Pemeriksaan Orthanc belum didaftarkan.');
     var currentStatus = normalizeString_(inbox.status).toUpperCase();
+    var receivedDicoms = readyOrthancDicomsForInbox_(inbox.inbox_id).length;
+    var skippedDicoms = boundedInteger_(studyPayload.skipped_dicoms, 0, 1000, Number(inbox.skipped_dicoms) || 0);
+    var expectedDicoms = boundedInteger_(studyPayload.expected_dicoms, 0, 1000,
+      Number(inbox.expected_dicoms) || receivedDicoms + skippedDicoms);
     if ([ORTHANC_INBOX_STATUSES.READY, ORTHANC_INBOX_STATUSES.IMPORTED, ORTHANC_INBOX_STATUSES.REJECTED].indexOf(currentStatus) >= 0) {
+      updateRecord_('ORTHANC_INBOX', inbox._rowNumber, {
+        expected_dicoms: expectedDicoms,
+        received_dicoms: receivedDicoms,
+        skipped_dicoms: skippedDicoms,
+        updated_at: now_()
+      });
       return {
         inbox: inbox,
         status: currentStatus,
         received: Number(inbox.received_images) || orthancImagesForInbox_(inbox.inbox_id).length,
         skipped: Number(inbox.skipped_images) || 0,
+        receivedDicoms: receivedDicoms,
+        skippedDicoms: skippedDicoms,
         unchanged: true
       };
     }
@@ -242,10 +439,16 @@ function finalizeOrthancStudy_(bridge, studyPayload) {
       expected_images: expected,
       received_images: received,
       skipped_images: skipped,
+      expected_dicoms: expectedDicoms,
+      received_dicoms: receivedDicoms,
+      skipped_dicoms: skippedDicoms,
       bridge_message: message,
       updated_at: now_()
     });
-    return { inbox: inbox, status: status, received: received, skipped: skipped };
+    return {
+      inbox: inbox, status: status, received: received, skipped: skipped,
+      receivedDicoms: receivedDicoms, skippedDicoms: skippedDicoms
+    };
   });
   if (!result.unchanged) {
     writeAudit_(null, 'ORTHANC_STUDY_RECEIVED', '', '', {
@@ -253,10 +456,18 @@ function finalizeOrthancStudy_(bridge, studyPayload) {
       inbox_id: result.inbox.inbox_id,
       received_images: result.received,
       skipped_images: result.skipped,
+      received_dicoms: result.receivedDicoms,
+      skipped_dicoms: result.skippedDicoms,
       status: result.status
     });
   }
-  return { inbox_id: normalizeString_(result.inbox.inbox_id), status: result.status, received_images: result.received };
+  return {
+    inbox_id: normalizeString_(result.inbox.inbox_id),
+    status: result.status,
+    received_images: result.received,
+    received_dicoms: result.receivedDicoms,
+    skipped_dicoms: result.skippedDicoms
+  };
 }
 
 function listOrthancInbox(sessionToken, includeProcessed) {
@@ -315,11 +526,18 @@ function rejectOrthancInbox(sessionToken, inboxId) {
         rejected_by: user.google_email,
         updated_at: now_()
       });
-      return { inbox: current, images: orthancImagesForInbox_(current.inbox_id) };
+      return {
+        inbox: current,
+        images: orthancImagesForInbox_(current.inbox_id),
+        dicoms: orthancDicomsForInbox_(current.inbox_id)
+      };
     });
     result.images.forEach(function (image) {
       trashDriveFileById_(image.drive_file_id);
       trashDriveFileById_(image.thumbnail_file_id);
+    });
+    result.dicoms.forEach(function (dicom) {
+      trashDriveFileById_(dicom.staging_drive_file_id);
     });
     writeAudit_(user, 'ORTHANC_STUDY_REJECTED', '', '', { inbox_id: result.inbox.inbox_id });
     return success_({ inbox_id: result.inbox.inbox_id });
@@ -405,6 +623,7 @@ function createClaimFromOrthanc(sessionToken, payload) {
         facility_id: values.facility_id,
         patient_name: values.patient_name,
         patient_nik: values.patient_nik,
+        patient_phone: values.patient_phone,
         patient_birth_date: values.patient_birth_date,
         examination_date: values.examination_date,
         status: CLAIM_STATUSES.COLLECTING_DOCUMENTS,
@@ -418,6 +637,7 @@ function createClaimFromOrthanc(sessionToken, payload) {
       };
       appendRecord_('CLAIMS', claim);
       documents.forEach(function (document) { appendRecord_('DOCUMENTS', document); });
+      var attachedDicoms = attachOriginalDicomsToClaim_(inbox, claim, copiedFiles);
       selected.forEach(function (image, index) {
         updateRecord_('ORTHANC_IMAGES', image._rowNumber, { imported_document_id: documents[index].document_id });
       });
@@ -428,16 +648,30 @@ function createClaimFromOrthanc(sessionToken, payload) {
         imported_by: user.google_email,
         updated_at: timestamp
       });
-      return { claim: claim, inbox: inbox, stagingImages: stagingImages, documentCount: documents.length };
+      return {
+        claim: claim,
+        inbox: inbox,
+        stagingImages: stagingImages,
+        attachedDicoms: attachedDicoms,
+        documentCount: documents.length
+      };
     });
     created.stagingImages.forEach(function (image) {
       trashDriveFileById_(image.drive_file_id);
       trashDriveFileById_(image.thumbnail_file_id);
     });
+    created.attachedDicoms.forEach(function (dicom, index) {
+      trashDriveFileById_(dicom.staging_drive_file_id);
+      var current = findRecord_('ORTHANC_DICOMS', 'dicom_id', dicom.dicom_id) || dicom;
+      backupOriginalDicomSafely_(current, created.claim,
+        Number(dicom.sequence_number) || index + 1,
+        Math.max(created.attachedDicoms.length, Number(created.inbox.expected_dicoms) || 0));
+    });
     writeAudit_(user, 'ORTHANC_CLAIM_IMPORTED', created.claim.claim_id, '', {
       inbox_id: created.inbox.inbox_id,
       orthanc_study_id: created.inbox.orthanc_study_id,
-      document_count: created.documentCount
+      document_count: created.documentCount,
+      dicom_count: created.attachedDicoms.length
     });
     return success_(claimDetailForClient_(created.claim));
   } catch (error) {
@@ -459,6 +693,77 @@ function rollbackFailedOrthancClaim_(claimId, documentIds) {
     });
   } catch (rollbackError) {
     console.error(JSON.stringify({ code: 'ORTHANC_IMPORT_ROLLBACK_FAILED', message: rollbackError.message }));
+  }
+}
+
+function attachOriginalDicomsToClaim_(inbox, claim, copiedFiles) {
+  var dicoms = readyOrthancDicomsForInbox_(inbox.inbox_id).sort(function (left, right) {
+    return (Number(left.sequence_number) || 0) - (Number(right.sequence_number) || 0) ||
+      normalizeString_(left.source_key).localeCompare(normalizeString_(right.source_key));
+  });
+  var total = Math.max(dicoms.length, Number(inbox.expected_dicoms) || 0);
+  var folder = getClaimSubfolder_(claim, 'DICOM');
+  return dicoms.map(function (dicom, index) {
+    var sequence = Number(dicom.sequence_number) || index + 1;
+    var filename = claimDicomFilename_(claim, sequence, total);
+    var storageFilename = claimDicomStorageFilename_(dicom, sequence, total);
+    var existingClaimFile = accessibleDriveFile_(dicom.claim_drive_file_id);
+    var claimFile = existingClaimFile;
+    if (!claimFile) {
+      var stagingFile = accessibleDriveFile_(dicom.staging_drive_file_id);
+      assert_(stagingFile, 'DICOM_STAGING_FILE_MISSING', 'DICOM asli pada penampungan Orthanc tidak tersedia.');
+      claimFile = stagingFile.makeCopy(storageFilename, folder);
+      copiedFiles.push(claimFile);
+    } else if (claimFile.getName() !== storageFilename) {
+      claimFile.setName(storageFilename);
+    }
+    updateRecord_('ORTHANC_DICOMS', dicom._rowNumber, {
+      status: 'ATTACHED',
+      claim_id: claim.claim_id,
+      claim_filename: filename,
+      claim_stored_filename: storageFilename,
+      claim_drive_file_id: claimFile.getId(),
+      claim_drive_url: claimFile.getUrl(),
+      attached_at: normalizeString_(dicom.attached_at) || now_(),
+      backup_status: secondaryBackupEnabled_() ? 'PENDING' : 'DISABLED',
+      backup_error: ''
+    });
+    return Object.assign({}, dicom, {
+      status: 'ATTACHED',
+      claim_id: claim.claim_id,
+      claim_filename: filename,
+      claim_stored_filename: storageFilename,
+      claim_drive_file_id: claimFile.getId(),
+      claim_drive_url: claimFile.getUrl(),
+      sequence_number: sequence
+    });
+  });
+}
+
+function attachOriginalDicomsToExistingClaim_(inbox) {
+  var copiedFiles = [];
+  try {
+    var result = withScriptLock_(function () {
+      var currentInbox = findRecord_('ORTHANC_INBOX', 'inbox_id', inbox.inbox_id);
+      var claim = findRecord_('CLAIMS', 'claim_id', currentInbox && currentInbox.claim_id);
+      assert_(claim, 'ORTHANC_CLAIM_NOT_FOUND', 'Klaim untuk DICOM asli tidak ditemukan.');
+      return {
+        claim: claim,
+        inbox: currentInbox,
+        dicoms: attachOriginalDicomsToClaim_(currentInbox, claim, copiedFiles)
+      };
+    });
+    var total = Math.max(result.dicoms.length, Number(result.inbox.expected_dicoms) || 0);
+    result.dicoms.forEach(function (dicom, index) {
+      trashDriveFileById_(dicom.staging_drive_file_id);
+      var current = findRecord_('ORTHANC_DICOMS', 'dicom_id', dicom.dicom_id) || dicom;
+      backupOriginalDicomSafely_(current, result.claim,
+        Number(dicom.sequence_number) || index + 1, total);
+    });
+    return result;
+  } catch (error) {
+    copiedFiles.forEach(trashDriveFile_);
+    throw error;
   }
 }
 
@@ -523,12 +828,27 @@ function getOrthancInboxFolders_(inboxId) {
   var thumbnails = folder.getFoldersByName('THUMBNAILS');
   var thumbnailFolder = thumbnails.hasNext() ? thumbnails.next() : folder.createFolder('THUMBNAILS');
   assert_(!thumbnails.hasNext(), 'ORTHANC_FOLDER_AMBIGUOUS', 'Folder thumbnail Orthanc tidak unik.');
-  return { images: folder, thumbnails: thumbnailFolder };
+  var dicoms = folder.getFoldersByName('DICOM');
+  var dicomFolder = dicoms.hasNext() ? dicoms.next() : folder.createFolder('DICOM');
+  assert_(!dicoms.hasNext(), 'ORTHANC_FOLDER_AMBIGUOUS', 'Folder DICOM Orthanc tidak unik.');
+  return { images: folder, thumbnails: thumbnailFolder, dicoms: dicomFolder };
 }
 
 function orthancImagesForInbox_(inboxId) {
   return readAllRecords_('ORTHANC_IMAGES').filter(function (image) {
     return normalizeString_(image.inbox_id) === normalizeString_(inboxId);
+  });
+}
+
+function orthancDicomsForInbox_(inboxId) {
+  return readAllRecords_('ORTHANC_DICOMS').filter(function (dicom) {
+    return normalizeString_(dicom.inbox_id) === normalizeString_(inboxId);
+  });
+}
+
+function readyOrthancDicomsForInbox_(inboxId) {
+  return orthancDicomsForInbox_(inboxId).filter(function (dicom) {
+    return ['READY', 'ATTACHED'].indexOf(normalizeString_(dicom.status).toUpperCase()) >= 0;
   });
 }
 
@@ -553,8 +873,8 @@ function requireOrthancImage_(imageId) {
 function orthancInboxListItem_(inbox) {
   return {
     inbox_id: normalizeString_(inbox.inbox_id),
-    patient_name_masked: maskPatientName(inbox.patient_name),
-    patient_id_masked: maskNik(inbox.patient_id),
+    patient_name: normalizeString_(inbox.patient_name),
+    patient_id: normalizeString_(inbox.patient_id),
     patient_nik_available: Boolean(normalizeString_(inbox.patient_nik_candidate)),
     study_date: claimDateKey_(inbox.study_date),
     study_description: normalizeString_(inbox.study_description),
@@ -562,6 +882,9 @@ function orthancInboxListItem_(inbox) {
     status: normalizeString_(inbox.status).toUpperCase(),
     received_images: Number(inbox.received_images) || 0,
     skipped_images: Number(inbox.skipped_images) || 0,
+    expected_dicoms: Number(inbox.expected_dicoms) || 0,
+    received_dicoms: Number(inbox.received_dicoms) || 0,
+    skipped_dicoms: Number(inbox.skipped_dicoms) || 0,
     claim_id: normalizeString_(inbox.claim_id),
     updated_at: toIsoString_(inbox.updated_at || inbox.received_at)
   };

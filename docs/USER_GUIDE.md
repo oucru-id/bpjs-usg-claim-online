@@ -6,13 +6,13 @@
 4. Saat pertama kali masuk, masukkan dan ulangi kata sandi baru yang terdiri dari minimal 6 karakter. Kata sandi tidak boleh tetap `admin123`.
 5. Klik **Keluar** setelah pekerjaan selesai, terutama saat memakai perangkat bersama.
 
-Kata sandi awal adalah `admin123`, kecuali administrator memberikan kata sandi sementara lain. Kata sandi ini hanya untuk aplikasi BPJS USG. Jangan gunakan kembali kata sandi Google, surel, perbankan, atau akun pribadi. Setelah lima kali salah memasukkan kata sandi, akun akan dikunci sementara. Hubungi administrator untuk mengatur ulang kata sandi.
+Kata sandi awal adalah `admin123`, kecuali administrator memberikan kata sandi sementara lain. Kata sandi ini hanya untuk Sistem Klaim USG BPJS. Jangan gunakan kembali kata sandi Google, surel, perbankan, atau akun pribadi. Setelah lima kali salah memasukkan kata sandi, akun akan dikunci sementara. Hubungi administrator untuk mengatur ulang kata sandi.
 
 ## Membuat klaim
 
 1. Buka menu **Klaim**.
 2. Klik **+ Buat Klaim Baru**.
-3. Isi nama pasien, NIK 16 angka, tanggal lahir, tanggal pemeriksaan USG, dan fasilitas.
+3. Isi nama pasien, NIK 16 angka, No. HP, tanggal lahir, tanggal pemeriksaan USG, dan fasilitas. No. HP dapat ditulis sebagai `08...` atau `+628...`.
 4. Periksa kembali data lalu klik **Simpan Klaim**.
 5. Sistem membuat kode klaim otomatis dan membuka halaman detail.
 
@@ -25,7 +25,7 @@ Jika menu **Orthanc** tersedia:
 1. Pastikan pemeriksaan dari alat USG sudah selesai dikirim ke Orthanc.
 2. Buka menu **Orthanc**, kemudian klik **Perbarui Daftar**.
 3. Pada pemeriksaan berstatus **Siap ditinjau**, klik **Tinjau**.
-4. Periksa dan koreksi nama pasien, NIK, tanggal lahir, serta tanggal pemeriksaan.
+4. Periksa dan koreksi nama pasien, NIK, No. HP, tanggal lahir, serta tanggal pemeriksaan. No. HP wajib diisi manual karena tidak berasal dari DICOM.
 5. Jika `PatientID` pada DICOM bukan NIK 16 angka, NIK tidak diisi otomatis dan wajib dimasukkan petugas.
 6. Periksa thumbnail dan pilih hanya gambar USG yang benar.
 7. Centang konfirmasi pasien, lalu klik **Buat Klaim dari Orthanc**.
@@ -35,10 +35,10 @@ Gunakan **Abaikan Pemeriksaan** hanya untuk data uji, duplikat, atau pemeriksaan
 
 ## Mencari dan membuka klaim
 
-- Gunakan kotak pencarian untuk kode klaim, nama pasien, atau NIK.
+- Gunakan kotak pencarian untuk kode klaim, nama pasien, NIK, atau No. HP.
 - Gunakan filter status dan tanggal pemeriksaan bila diperlukan.
-- Daftar klaim menampilkan nama dan NIK yang disamarkan.
-- Klik **Buka** untuk melihat detail klaim yang diizinkan. Halaman detail menampilkan NIK lengkap, jadi jangan biarkan halaman terbuka pada perangkat bersama.
+- Daftar klaim menampilkan nama pasien, NIK, dan No. HP lengkap kepada pengguna yang berwenang.
+- Klik **Buka** untuk melihat detail klaim yang diizinkan. Halaman detail menampilkan NIK dan No. HP lengkap, jadi jangan biarkan halaman terbuka pada perangkat bersama.
 
 ## Mengubah klaim
 
@@ -86,7 +86,7 @@ Rotasi, pilihan, dan urutan disimpan pada server sehingga tetap sama setelah hal
 
 1. Periksa bagian **Siapkan PDF Klaim**. Sedikitnya satu Gambar USG harus dipilih.
 2. Klik **Buat PDF**.
-3. Periksa kembali nama pasien, NIK lengkap, tanggal USG, dan jumlah setiap jenis berkas.
+3. Periksa kembali nama pasien, NIK lengkap, No. HP, tanggal USG, dan jumlah setiap jenis berkas.
 4. Centang konfirmasi bahwa seluruh berkas berasal dari pasien yang sama.
 5. Klik **Ya, Buat PDF** dan tunggu sampai proses selesai.
 6. Gunakan **Pratinjau PDF** untuk memeriksa hasil.

@@ -7,6 +7,9 @@ function runPhase1SelfTests(sessionToken) {
   }
   test('Email dinormalisasi', function () { assert_(normalizeEmail_(' Admin@Example.Org ') === 'admin@example.org', 'TEST_FAILED', 'Normalisasi email gagal.'); });
   test('NIK tetap string dan tersamar', function () { assert_(maskNik('0000000000000157') === '************0157', 'TEST_FAILED', 'Masking NIK gagal.'); });
+  test('No. HP dinormalisasi', function () {
+    assert_(normalizePatientPhone_('+62 812-3456-7890') === '081234567890', 'TEST_FAILED', 'Normalisasi No. HP gagal.');
+  });
   test('Token aplikasi disimpan sebagai hash', function () {
     var token = createSecureToken_();
     assert_(token.length >= 64 && hashToken_(token) !== token && hashToken_(token) === hashToken_(token), 'TEST_FAILED', 'Hash token gagal.');

@@ -111,6 +111,9 @@
       document.getElementById('app-shell').classList.add('hidden');
       document.getElementById('password-change-view').classList.add('hidden');
       document.getElementById('login-view').classList.remove('hidden');
+      var form = document.getElementById('login-form');
+      form.elements.username.disabled = false;
+      form.elements.password.disabled = false;
       var error = document.getElementById('login-message');
       if (message) {
         error.textContent = message;
@@ -118,6 +121,7 @@
       } else {
         error.classList.add('hidden');
       }
+      window.setTimeout(function () { form.elements.username.focus(); }, 0);
     }
 
     function showApplication() {
@@ -130,6 +134,11 @@
       document.getElementById('login-view').classList.add('hidden');
       document.getElementById('app-shell').classList.add('hidden');
       document.getElementById('password-change-view').classList.remove('hidden');
+      var form = document.getElementById('password-change-form');
+      form.elements.new_password.disabled = false;
+      form.elements.password_confirmation.disabled = false;
+      form.elements.new_password.readOnly = false;
+      form.elements.password_confirmation.readOnly = false;
       var error = document.getElementById('password-change-message');
       if (message) {
         error.textContent = message;
@@ -137,11 +146,33 @@
       } else {
         error.classList.add('hidden');
       }
+      window.setTimeout(function () { form.elements.new_password.focus(); }, 0);
     }
 
     function clearSession() {
       state.sessionToken = '';
       removeStoredSessionToken();
+    }
+
+    function applyAuthenticationResult(data, button) {
+      state.sessionToken = data.sessionToken;
+      storeSessionToken(state.sessionToken);
+      if (data.bootstrap) {
+        initialize(data.bootstrap);
+        return;
+      }
+      refreshBootstrap(button);
+    }
+
+    function refreshBootstrap(button) {
+      var requestedToken = state.sessionToken;
+      callServer('getAppBootstrap', [], function (bootstrap) {
+        if (state.sessionToken === requestedToken) initialize(bootstrap);
+      }, button, function (message) {
+        if (state.sessionToken !== requestedToken) return;
+        clearSession();
+        showLogin(message);
+      });
     }
 
     function showMessage(message, isError) {
@@ -271,8 +302,9 @@
         var row = document.createElement('tr');
         var values = [
           claim.claim_code,
-          claim.patient_name_masked,
-          claim.patient_nik_masked,
+          claim.patient_name,
+          claim.patient_nik,
+          claim.patient_phone,
           formatIndonesianDate(claim.examination_date),
           claim.facility_name
         ];
@@ -322,8 +354,8 @@
         var row = document.createElement('tr');
         [
           formatIndonesianDateTime(item.updated_at),
-          item.patient_name_masked || 'Belum tersedia',
-          item.patient_id_masked || 'Belum tersedia',
+          item.patient_name || 'Belum tersedia',
+          item.patient_id || 'Belum tersedia',
           formatIndonesianDate(item.study_date),
           String(item.received_images || 0) + (item.skipped_images ? ' (' + item.skipped_images + ' dilewati)' : '')
         ].forEach(function (value) {
@@ -357,21 +389,26 @@
           state.currentOrthanc = detail;
           var form = document.getElementById('orthanc-import-form');
           form.reset();
+          setOrthancImportBusy(false);
+          showOrthancImportMessage('', false);
           form.elements.inbox_id.value = detail.inbox_id;
           form.elements.patient_name.value = detail.patient_name || '';
           form.elements.patient_nik.value = detail.patient_nik_candidate || '';
+          form.elements.patient_phone.value = '';
           form.elements.patient_birth_date.value = detail.patient_birth_date || '';
           form.elements.examination_date.value = detail.study_date || '';
           populateOrthancFacilities(state.bootstrap.user.facility_id);
           var summary = [];
           if (detail.study_description) summary.push(detail.study_description);
           if (detail.accession_number) summary.push('Nomor akses: ' + detail.accession_number);
+          summary.push('DICOM asli: ' + (detail.received_dicoms || 0) + ' dari ' + (detail.expected_dicoms || 0));
           document.getElementById('orthanc-source-summary').textContent = summary.join(' - ') || 'Pemeriksaan dari Orthanc';
           var warnings = [];
           if (!detail.patient_nik_candidate) warnings.push('PatientID DICOM bukan NIK 16 angka. Isi dan periksa NIK secara manual.');
           if (!detail.patient_birth_date) warnings.push('Tanggal lahir tidak tersedia pada DICOM. Isi secara manual.');
           if (!detail.study_date) warnings.push('Tanggal pemeriksaan tidak tersedia atau tidak valid. Isi secara manual.');
           if (detail.skipped_images) warnings.push(detail.skipped_images + ' gambar/frame tidak dapat dikonversi atau melewati batas impor.');
+          if (detail.skipped_dicoms) warnings.push(detail.skipped_dicoms + ' DICOM asli belum berhasil diunggah dan akan dicoba kembali.');
           if (detail.bridge_message) warnings.push(detail.bridge_message);
           var warning = document.getElementById('orthanc-import-warning');
           warning.textContent = warnings.join(' ');
@@ -413,27 +450,73 @@
       document.getElementById('orthanc-images-empty').classList.toggle('hidden', images.length > 0);
     }
 
+    function showOrthancImportMessage(message, isError) {
+      var element = document.getElementById('orthanc-import-message');
+      element.textContent = message || '';
+      element.classList.toggle('error', Boolean(isError));
+      element.classList.toggle('hidden', !message);
+      if (message && element.scrollIntoView) element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function setOrthancImportBusy(isBusy) {
+      var form = document.getElementById('orthanc-import-form');
+      var importButton = document.getElementById('import-orthanc-button');
+      form.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+      importButton.textContent = isBusy ? 'Sedang membuat klaim...' : 'Buat Klaim dari Orthanc';
+      ['import-orthanc-button', 'reject-orthanc-button', 'cancel-orthanc-button', 'close-orthanc-dialog'].forEach(function (id) {
+        document.getElementById(id).disabled = isBusy;
+      });
+    }
+
     function importOrthancClaim(event) {
       event.preventDefault();
       var form = event.currentTarget;
+      showOrthancImportMessage('', false);
+      if (form.elements.patient_birth_date.value && form.elements.examination_date.value &&
+          form.elements.patient_birth_date.value > form.elements.examination_date.value) {
+        showOrthancImportMessage('Tanggal lahir tidak boleh setelah tanggal pemeriksaan USG.', true);
+        form.elements.patient_birth_date.focus();
+        return;
+      }
       var imageIds = Array.prototype.slice.call(document.querySelectorAll('[data-orthanc-image-id]:checked'))
         .map(function (input) { return input.dataset.orthancImageId; });
+      if (imageIds.length === 0) {
+        showOrthancImportMessage('Pilih sedikitnya satu gambar USG dari Orthanc.', true);
+        return;
+      }
+      if (!form.elements.confirmed_patient.checked) {
+        showOrthancImportMessage('Konfirmasi data pasien wajib dicentang.', true);
+        form.elements.confirmed_patient.focus();
+        return;
+      }
       var payload = {
         inbox_id: form.elements.inbox_id.value,
         patient_name: form.elements.patient_name.value,
         patient_nik: form.elements.patient_nik.value.replace(/\D/g, ''),
+        patient_phone: form.elements.patient_phone.value,
         patient_birth_date: form.elements.patient_birth_date.value,
         examination_date: form.elements.examination_date.value,
         facility_id: form.elements.facility_id.value,
         image_ids: imageIds,
         confirmed_patient: form.elements.confirmed_patient.checked
       };
+      setOrthancImportBusy(true);
+      showOrthancImportMessage('Sedang membuat klaim serta menyalin gambar USG dan DICOM asli. Mohon tunggu...', false);
       callServer('createClaimFromOrthanc', [payload], function (claim) {
+        setOrthancImportBusy(false);
         document.getElementById('orthanc-import-dialog').close();
         state.currentOrthanc = null;
-        showMessage('Klaim berhasil dibuat dan gambar USG dari Orthanc sudah diimpor.', false);
+        showMessage('Klaim berhasil dibuat. Gambar USG dan DICOM asli yang tersedia sudah diimpor.', false);
         openClaimDetail(claim.claim_id);
-      }, document.getElementById('import-orthanc-button'));
+      }, document.getElementById('import-orthanc-button'), function (message, code) {
+        setOrthancImportBusy(false);
+        if (['IDENTITY_UNAVAILABLE', 'SESSION_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED'].indexOf(code) >= 0) {
+          document.getElementById('orthanc-import-dialog').close();
+          handleServerError(message, code);
+          return;
+        }
+        showOrthancImportMessage(message, true);
+      });
     }
 
     function rejectCurrentOrthancInbox() {
@@ -470,6 +553,7 @@
       status.textContent = claimStatusLabel(claim.status);
       document.getElementById('claim-detail-name').textContent = claim.patient_name;
       document.getElementById('claim-detail-nik').textContent = claim.patient_nik;
+      document.getElementById('claim-detail-phone').textContent = claim.patient_phone || '-';
       document.getElementById('claim-detail-birth-date').textContent = formatIndonesianDate(claim.patient_birth_date);
       document.getElementById('claim-detail-examination-date').textContent = formatIndonesianDate(claim.examination_date);
       document.getElementById('claim-detail-facility').textContent = claim.facility_name;
@@ -503,6 +587,7 @@
         form.elements.claim_id.value = claim ? claim.claim_id : '';
         form.elements.patient_name.value = claim ? claim.patient_name : '';
         form.elements.patient_nik.value = claim ? claim.patient_nik : '';
+        form.elements.patient_phone.value = claim ? claim.patient_phone : '';
         form.elements.patient_birth_date.value = claim ? claim.patient_birth_date : '';
         form.elements.examination_date.value = claim ? claim.examination_date : '';
         populateClaimFacilities(claim ? claim.facility_id : state.bootstrap.user.facility_id);
@@ -527,6 +612,7 @@
         claim_id: form.elements.claim_id.value,
         patient_name: form.elements.patient_name.value,
         patient_nik: form.elements.patient_nik.value.replace(/\D/g, ''),
+        patient_phone: form.elements.patient_phone.value,
         patient_birth_date: form.elements.patient_birth_date.value,
         examination_date: form.elements.examination_date.value,
         facility_id: form.elements.facility_id.value
@@ -907,6 +993,7 @@
       form.reset();
       document.getElementById('pdf-confirm-patient').textContent = state.currentClaim.patient_name;
       document.getElementById('pdf-confirm-nik').textContent = state.currentClaim.patient_nik;
+      document.getElementById('pdf-confirm-phone').textContent = state.currentClaim.patient_phone || '-';
       document.getElementById('pdf-confirm-date').textContent = formatIndonesianDate(preparation.examination_date);
       var counts = document.getElementById('pdf-confirm-counts');
       counts.textContent = '';
@@ -946,9 +1033,17 @@
         confirmed_same_patient: true
       }], function (data) {
         progress.textContent = data.filename + ' berhasil dibuat (' + formatFileSize(data.file_size_bytes) + ').';
+        if (data.backup && data.backup.status === 'READY') {
+          progress.textContent += ' Salinan Drive cadangan: ' + data.backup.filename + '.';
+        } else if (data.backup && data.backup.status === 'ERROR') {
+          progress.classList.add('error');
+          progress.textContent += ' PDF utama aman, tetapi backup Drive kedua gagal: ' + data.backup.message;
+        }
         state.currentClaim = data.claim;
         renderClaimDetail(data.claim);
-        showMessage('PDF klaim berhasil dibuat.', false);
+        showMessage(data.backup && data.backup.status === 'ERROR'
+          ? 'PDF berhasil dibuat, tetapi backup Drive kedua perlu diperiksa.'
+          : 'PDF klaim berhasil dibuat.', Boolean(data.backup && data.backup.status === 'ERROR'));
       }, button, function (message, code) {
         progress.classList.add('error');
         progress.textContent = message;
@@ -1479,9 +1574,11 @@
         bridge_id: document.getElementById('orthanc-key-bridge-id').value,
         bridge_key: document.getElementById('orthanc-key-value').value,
         lookback_days: 2,
-        poll_seconds: 60,
+        poll_seconds: 600,
         max_images_per_study: 30,
         max_frames_per_instance: 1,
+        upload_original_dicoms: true,
+        max_dicom_instances_per_study: 100,
         verify_tls: true
       };
       var text = JSON.stringify(configuration, null, 2);
@@ -1520,13 +1617,15 @@
       var form = event.currentTarget;
       var button = document.getElementById('login-button');
       var error = document.getElementById('login-message');
+      var originalButtonText = button.textContent;
+      button.textContent = 'Memeriksa...';
       error.classList.add('hidden');
       callPublicServer('loginWithPassword', [form.elements.username.value, form.elements.password.value], function (data) {
+        button.textContent = originalButtonText;
         form.elements.password.value = '';
-        state.sessionToken = data.sessionToken;
-        storeSessionToken(state.sessionToken);
-        callServer('getAppBootstrap', [], initialize, button, function (message) { showLogin(message); });
+        applyAuthenticationResult(data, button);
       }, button, function (message) {
+        button.textContent = originalButtonText;
         form.elements.password.value = '';
         showLogin(message);
       });
@@ -1537,13 +1636,15 @@
       var form = event.currentTarget;
       var button = document.getElementById('password-change-button');
       var error = document.getElementById('password-change-message');
+      var originalButtonText = button.textContent;
+      button.textContent = 'Menyimpan...';
       error.classList.add('hidden');
       callServer('changeOwnPassword', [form.elements.new_password.value, form.elements.password_confirmation.value], function (data) {
+        button.textContent = originalButtonText;
         form.reset();
-        state.sessionToken = data.sessionToken;
-        storeSessionToken(state.sessionToken);
-        callServer('getAppBootstrap', [], initialize, button, function (message) { showLogin(message); });
+        applyAuthenticationResult(data, button);
       }, button, function (message, code) {
+        button.textContent = originalButtonText;
         form.elements.new_password.value = '';
         form.elements.password_confirmation.value = '';
         if (['SESSION_INVALID', 'SESSION_REVOKED', 'SESSION_EXPIRED'].indexOf(code) >= 0) {
@@ -1612,6 +1713,7 @@
     document.getElementById('close-orthanc-key-dialog').addEventListener('click', function () { document.getElementById('orthanc-key-dialog').close(); });
     document.getElementById('done-orthanc-key-button').addEventListener('click', function () { document.getElementById('orthanc-key-dialog').close(); });
     document.getElementById('logout-button').addEventListener('click', logout);
-    callServer('getAppBootstrap', [], initialize, null, function (message) { showLogin(message); });
+    if (state.sessionToken) refreshBootstrap(null);
+    else showLogin();
   }());
 </script>

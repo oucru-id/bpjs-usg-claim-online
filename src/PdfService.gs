@@ -1,3 +1,15 @@
+var PDF_LAYOUT = Object.freeze({
+  PAGE_WIDTH: 595.28,
+  PAGE_HEIGHT: 841.89,
+  HORIZONTAL_MARGIN_POINTS: 12,
+  VERTICAL_MARGIN_POINTS: 24,
+  CONTENT_WIDTH_POINTS: 571.28,
+  CONTENT_HEIGHT_POINTS: 793.89,
+  FULL_PAGE_IMAGE_HEIGHT_POINTS: 680,
+  POINTS_TO_PIXELS: 96 / 72,
+  PAGE_NUMBER_RESERVED_HEIGHT_POINTS: 90
+});
+
 function getPdfPreparation(sessionToken, claimId) {
   try {
     var user = requireAuthenticatedUser(sessionToken);
@@ -11,6 +23,7 @@ function getPdfPreparation(sessionToken, claimId) {
 function generateClaimPdf(sessionToken, payload) {
   var outputFile = null;
   var temporaryFile = null;
+  var backupResult = { status: 'DISABLED', filename: '' };
   try {
     var user = requirePermission('can_generate_pdf', sessionToken);
     assert_(normalizeBoolean_(payload && payload.confirmed_same_patient),
@@ -24,13 +37,14 @@ function generateClaimPdf(sessionToken, payload) {
       assert_(preparation.issues.length === 0, 'PDF_REQUIREMENTS_NOT_MET', preparation.issues.join(' '));
       var version = Math.max(0, Number(claim.pdf_version) || 0) + 1;
       assert_(version <= 999, 'PDF_VERSION_LIMIT', 'Batas versi PDF untuk klaim ini sudah tercapai. Hubungi administrator.');
-      var filename = 'BPJS_USG_' + normalizeString_(claim.claim_code) + '_v' + ('000' + version).slice(-3) + '.pdf';
+      var filename = claimPdfFilename_(claim, version);
+      var storageFilename = claimPdfStorageFilename_(claim, version);
       var temporaryDocument = DocumentApp.create('TEMP_' + normalizeString_(claim.claim_code) + '_' + Utilities.getUuid());
       temporaryFile = DriveApp.getFileById(temporaryDocument.getId());
       temporaryFile.moveTo(DriveApp.getFolderById(getRequiredProperty_(SCRIPT_PROPERTY_KEYS.SYSTEM_FOLDER_ID)));
       composeClaimPdf_(temporaryDocument, claim, preparation.documents);
       temporaryDocument.saveAndClose();
-      var pdfBlob = DriveApp.getFileById(temporaryDocument.getId()).getAs(MimeType.PDF).setName(filename);
+      var pdfBlob = DriveApp.getFileById(temporaryDocument.getId()).getAs(MimeType.PDF).setName(storageFilename);
       var pdfBytes = pdfBlob.getBytes();
       assert_(pdfBytes.length > 0, 'PDF_EMPTY', 'PDF yang dibuat kosong. Silakan coba kembali.');
       assert_(pdfBytes.length <= maxPdfSizeBytes_(), 'PDF_TOO_LARGE',
@@ -43,6 +57,8 @@ function generateClaimPdf(sessionToken, payload) {
         pdf_version: version,
         final_pdf_file_id: outputFile.getId(),
         final_pdf_filename: filename,
+        final_pdf_storage_filename: storageFilename,
+        final_pdf_url: outputFile.getUrl(),
         final_pdf_generated_at: timestamp,
         final_pdf_generated_by: user.google_email,
         updated_by: user.google_email,
@@ -53,21 +69,25 @@ function generateClaimPdf(sessionToken, payload) {
       return {
         claim: claim,
         filename: filename,
+        storageFilename: storageFilename,
         version: version,
         fileSizeBytes: pdfBytes.length,
         documentCount: preparation.documents.length
       };
     });
+    backupResult = backupClaimPdfSafely_(result.claim, outputFile);
     writeAudit_(user, 'PDF_GENERATED', result.claim.claim_id, '', {
-      filename: result.filename,
+      storage_filename: result.storageFilename,
       pdf_version: result.version,
       file_size_bytes: result.fileSizeBytes,
-      selected_document_count: result.documentCount
+      selected_document_count: result.documentCount,
+      backup_status: backupResult.status
     });
     return success_({
       filename: result.filename,
       pdf_version: result.version,
       file_size_bytes: result.fileSizeBytes,
+      backup: backupResult,
       claim: claimDetailForClient_(result.claim)
     });
   } catch (error) {
@@ -84,7 +104,7 @@ function getFinalPdfForPreview(sessionToken, claimId) {
     var claim = requireAccessibleClaim_(user, claimId);
     var content = finalPdfContent_(claim);
     writeAudit_(user, 'PDF_PREVIEWED', claim.claim_id, '', {
-      filename: content.filename,
+      storage_filename: normalizeString_(claim.final_pdf_storage_filename),
       file_size_bytes: content.file_size_bytes
     });
     return success_(content);
@@ -99,7 +119,7 @@ function downloadFinalPdf(sessionToken, claimId) {
     var claim = requireAccessibleClaim_(user, claimId);
     var content = finalPdfContent_(claim);
     writeAudit_(user, 'PDF_DOWNLOADED', claim.claim_id, '', {
-      filename: content.filename,
+      storage_filename: normalizeString_(claim.final_pdf_storage_filename),
       file_size_bytes: content.file_size_bytes
     });
     return success_(content);
@@ -215,11 +235,14 @@ function buildPdfPreparation_(claim) {
 function composeClaimPdf_(document, claim, documents) {
   var body = document.getBody();
   body.clear();
-  body.setPageWidth(595.28).setPageHeight(841.89)
-    .setMarginTop(36).setMarginBottom(36).setMarginLeft(36).setMarginRight(36);
+  body.setPageWidth(PDF_LAYOUT.PAGE_WIDTH).setPageHeight(PDF_LAYOUT.PAGE_HEIGHT)
+    .setMarginTop(PDF_LAYOUT.VERTICAL_MARGIN_POINTS).setMarginBottom(PDF_LAYOUT.VERTICAL_MARGIN_POINTS)
+    .setMarginLeft(PDF_LAYOUT.HORIZONTAL_MARGIN_POINTS).setMarginRight(PDF_LAYOUT.HORIZONTAL_MARGIN_POINTS);
   var hasPage = false;
+  var pageNumber = 0;
   if (getBooleanSetting_('PDF_INCLUDE_COVER', true)) {
-    appendPdfCover_(body, claim);
+    pageNumber += 1;
+    appendPdfCover_(body, claim, pageNumber);
     hasPage = true;
   }
   var usgPerPage = pdfUsgImagesPerPage_();
@@ -235,34 +258,45 @@ function composeClaimPdf_(document, claim, documents) {
         .setHeading(DocumentApp.ParagraphHeading.HEADING2)
         .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
       hasPage = true;
+      pageNumber += 1;
       usgOnPage = 0;
     }
     if (isUsg) usgOnPage += 1;
-    appendPdfImage_(body, item, index + 1, isUsg && usgPerPage === 2 ? 300 : 650);
+    var imageDimensions = appendPdfImage_(
+      body,
+      item,
+      index + 1,
+      pdfPointsToPixels_(PDF_LAYOUT.FULL_PAGE_IMAGE_HEIGHT_POINTS),
+      pdfPointsToPixels_(PDF_LAYOUT.CONTENT_WIDTH_POINTS)
+    );
+    appendPdfPageNumber_(body, pageNumber, imageDimensions.height);
     previousWasUsg = isUsg;
     if (!isUsg) usgOnPage = 0;
   });
 }
 
-function appendPdfCover_(body, claim) {
+function appendPdfCover_(body, claim, pageNumber) {
+  var facility = findRecord_('FACILITIES', 'facility_id', claim.facility_id);
+  var facilityName = facility ? normalizeString_(facility.facility_name) : normalizeString_(claim.facility_id);
   body.appendParagraph('DOKUMEN PENDUKUNG')
     .setHeading(DocumentApp.ParagraphHeading.TITLE)
     .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
   body.appendParagraph('KLAIM USG BPJS')
     .setHeading(DocumentApp.ParagraphHeading.HEADING1)
     .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  var facilityTitle = body.appendParagraph(facilityName || '-');
+  facilityTitle.setAlignment(DocumentApp.HorizontalAlignment.CENTER).setSpacingAfter(10);
+  facilityTitle.editAsText().setBold(true).setFontSize(14);
   body.appendParagraph('');
   appendPdfCoverField_(body, 'Kode Klaim', normalizeString_(claim.claim_code));
   appendPdfCoverField_(body, 'Nama Pasien', normalizeString_(claim.patient_name));
   appendPdfCoverField_(body, 'NIK', normalizeString_(claim.patient_nik));
+  appendPdfCoverField_(body, 'No. HP', normalizeString_(claim.patient_phone));
   appendPdfCoverField_(body, 'Tanggal Lahir', formatIndonesianServerDate_(claim.patient_birth_date));
   appendPdfCoverField_(body, 'Tanggal Pemeriksaan USG', formatIndonesianServerDate_(claim.examination_date));
-  var facility = findRecord_('FACILITIES', 'facility_id', claim.facility_id);
-  appendPdfCoverField_(body, 'Fasilitas', facility ? normalizeString_(facility.facility_name) : normalizeString_(claim.facility_id));
+  appendPdfCoverField_(body, 'Fasilitas', facilityName);
   appendPdfCoverField_(body, 'Dibuat', formatIndonesianServerDateTime_(now_()));
-  var warning = body.appendParagraph('Pastikan seluruh berkas pada dokumen ini berasal dari pasien yang sama.');
-  warning.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-  warning.editAsText().setItalic(true);
+  appendPdfPageNumber_(body, pageNumber, null);
 }
 
 function appendPdfCoverField_(body, label, value) {
@@ -272,18 +306,51 @@ function appendPdfCoverField_(body, label, value) {
   body.appendParagraph(value || '-').setSpacingAfter(4);
 }
 
-function appendPdfImage_(body, item, sequence, maxHeight) {
+function appendPdfImage_(body, item, sequence, maxHeight, maxWidth) {
   var label = (DOCUMENT_TYPE_LABELS[normalizeString_(item.document_type)] || 'Berkas') + ' ' + sequence;
   body.appendParagraph(label).setAlignment(DocumentApp.HorizontalAlignment.CENTER).setSpacingAfter(4);
   var blob = getPrivateFileBlob_(item.drive_file_id);
   var image = body.appendImage(blob);
-  var originalWidth = Math.max(1, Number(item.image_width) || image.getWidth() || 1);
-  var originalHeight = Math.max(1, Number(item.image_height) || image.getHeight() || 1);
-  var scale = Math.min(1, 500 / originalWidth, maxHeight / originalHeight);
-  image.setWidth(Math.max(1, Math.round(originalWidth * scale)));
-  image.setHeight(Math.max(1, Math.round(originalHeight * scale)));
+  var originalWidth = Math.max(1, Number(image.getWidth()) || Number(item.image_width) || 1);
+  var originalHeight = Math.max(1, Number(image.getHeight()) || Number(item.image_height) || 1);
+  var dimensions = pdfImageDimensions_(originalWidth, originalHeight, maxWidth, maxHeight);
+  image.setWidth(dimensions.width);
+  image.setHeight(dimensions.height);
   image.setAltTitle(label).setAltDescription('Berkas klaim ' + label);
   image.getParent().asParagraph().setAlignment(DocumentApp.HorizontalAlignment.CENTER).setSpacingAfter(8);
+  return dimensions;
+}
+
+function appendPdfPageNumber_(body, pageNumber, imageHeight) {
+  var spacingBefore = imageHeight === null || imageHeight === undefined
+    ? 12
+    : Math.max(4, PDF_LAYOUT.CONTENT_HEIGHT_POINTS - pdfPixelsToPoints_(Number(imageHeight || 0)) -
+      PDF_LAYOUT.PAGE_NUMBER_RESERVED_HEIGHT_POINTS);
+  var paragraph = body.appendParagraph('Halaman ' + pageNumber);
+  paragraph.setAlignment(DocumentApp.HorizontalAlignment.RIGHT)
+    .setSpacingBefore(spacingBefore)
+    .setSpacingAfter(0);
+  paragraph.editAsText().setFontSize(9).setForegroundColor('#666666');
+}
+
+function pdfImageDimensions_(originalWidth, originalHeight, maxWidth, maxHeight) {
+  var width = Math.max(1, Number(originalWidth) || 1);
+  var height = Math.max(1, Number(originalHeight) || 1);
+  var widthLimit = Math.max(1, Number(maxWidth) || pdfPointsToPixels_(PDF_LAYOUT.CONTENT_WIDTH_POINTS));
+  var heightLimit = Math.max(1, Number(maxHeight) || pdfPointsToPixels_(PDF_LAYOUT.FULL_PAGE_IMAGE_HEIGHT_POINTS));
+  var scale = Math.min(widthLimit / width, heightLimit / height);
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale))
+  };
+}
+
+function pdfPointsToPixels_(points) {
+  return Math.max(1, Math.floor(Number(points || 0) * PDF_LAYOUT.POINTS_TO_PIXELS));
+}
+
+function pdfPixelsToPoints_(pixels) {
+  return Number(pixels || 0) / PDF_LAYOUT.POINTS_TO_PIXELS;
 }
 
 function finalPdfContent_(claim) {
@@ -315,9 +382,7 @@ function finalPdfFile_(claim) {
 }
 
 function pdfUsgImagesPerPage_() {
-  var setting = findRecord_('SETTINGS', 'setting_key', 'PDF_USG_IMAGES_PER_PAGE');
-  var value = Number(setting ? setting.setting_value : 2);
-  return value === 1 ? 1 : 2;
+  return 1;
 }
 
 function maxPdfSizeMb_() {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -38,9 +39,11 @@ class BridgeConfig:
     bridge_id: str
     bridge_key: str
     lookback_days: int = 2
-    poll_seconds: int = 60
+    poll_seconds: int = 600
     max_images_per_study: int = 30
     max_frames_per_instance: int = 1
+    upload_original_dicoms: bool = True
+    max_dicom_instances_per_study: int = 100
     verify_tls: bool = True
     state_file: str = "state.json"
     log_file: str = "logs/orthanc-bridge.log"
@@ -83,6 +86,8 @@ class BridgeConfig:
             raise BridgeError("max_images_per_study harus antara 1 dan 30.")
         if not 1 <= self.max_frames_per_instance <= 30:
             raise BridgeError("max_frames_per_instance harus antara 1 dan 30.")
+        if not 1 <= self.max_dicom_instances_per_study <= 1000:
+            raise BridgeError("max_dicom_instances_per_study harus antara 1 dan 1000.")
 
 
 class OrthancClient:
@@ -140,6 +145,16 @@ class OrthancClient:
         response = self._request("GET", path, headers={"Accept": "image/jpeg"})
         return response.content
 
+    def instance_file(self, instance_id: str) -> bytes:
+        response = self._request(
+            "GET",
+            f"/instances/{instance_id}/file",
+            headers={"Accept": "application/dicom"},
+        )
+        if not response.content:
+            raise BridgeError("Orthanc mengembalikan DICOM kosong.")
+        return response.content
+
     def _request(self, method: str, path: str, allow_status: set[int] | None = None, **kwargs: Any) -> httpx.Response:
         try:
             response = self.client.request(method, path, **kwargs)
@@ -176,6 +191,30 @@ class AppsScriptClient:
             raise BridgeError(f"Web app menolak permintaan: {result.get('code', 'UNKNOWN')} - {result.get('message', 'tanpa pesan')}")
         return result.get("data") or {}
 
+    def upload_dicom(self, upload_url: str, content: bytes) -> str:
+        endpoint = urlparse(upload_url)
+        hostname = (endpoint.hostname or "").lower()
+        if endpoint.scheme != "https" or not (hostname == "googleapis.com" or hostname.endswith(".googleapis.com")):
+            raise BridgeError("URL unggah DICOM dari server Google tidak valid.")
+        try:
+            response = self.client.put(
+                upload_url,
+                content=content,
+                headers={
+                    "Content-Type": "application/dicom",
+                    "Content-Length": str(len(content)),
+                },
+                timeout=600,
+            )
+            response.raise_for_status()
+            result = response.json()
+        except (httpx.HTTPError, json.JSONDecodeError) as exc:
+            raise BridgeError("DICOM asli tidak dapat diunggah ke Google Drive.") from exc
+        file_id = str(result.get("id") or "")
+        if not re.fullmatch(r"[A-Za-z0-9._-]{10,120}", file_id):
+            raise BridgeError("Google Drive tidak mengembalikan ID file DICOM yang valid.")
+        return file_id
+
 
 class SyncState:
     def __init__(self, path: Path):
@@ -193,10 +232,19 @@ class SyncState:
         return source_key in self.values.get("completed_studies", {})
 
     def mark_completed(self, source_key: str) -> None:
-        completed = self.values.setdefault("completed_studies", {})
+        self._mark("completed_studies", source_key)
+
+    def dicoms_completed(self, source_key: str) -> bool:
+        return source_key in self.values.get("completed_dicoms", {})
+
+    def mark_dicoms_completed(self, source_key: str) -> None:
+        self._mark("completed_dicoms", source_key)
+
+    def _mark(self, collection: str, source_key: str) -> None:
+        completed = self.values.setdefault(collection, {})
         completed[source_key] = datetime.now(timezone.utc).isoformat()
         cutoff = datetime.now(timezone.utc) - timedelta(days=90)
-        self.values["completed_studies"] = {
+        self.values[collection] = {
             key: value for key, value in completed.items()
             if parse_iso_datetime(value) >= cutoff
         }
@@ -246,7 +294,7 @@ def merged_study_tags(study: dict[str, Any]) -> dict[str, Any]:
     return tags
 
 
-def study_payload(study: dict[str, Any], expected_images: int) -> dict[str, Any]:
+def study_payload(study: dict[str, Any], expected_images: int, expected_dicoms: int = 0) -> dict[str, Any]:
     tags = merged_study_tags(study)
     return {
         "orthanc_study_id": str(study.get("ID") or ""),
@@ -258,6 +306,7 @@ def study_payload(study: dict[str, Any], expected_images: int) -> dict[str, Any]
         "accession_number": str(tags.get("AccessionNumber") or "")[:80],
         "study_description": str(tags.get("StudyDescription") or "")[:160],
         "expected_images": expected_images,
+        "expected_dicoms": expected_dicoms,
     }
 
 
@@ -355,48 +404,107 @@ def sync_study(
     if not study_id:
         return
     key = source_key(config.bridge_id, study)
-    if state.completed(key):
+    previews_complete = state.completed(key)
+    dicoms_complete = state.dicoms_completed(key) if config.upload_original_dicoms else True
+    if previews_complete and (not config.upload_original_dicoms or dicoms_complete):
         return
-    references = instance_references(orthanc, study_id, config.max_images_per_study)
-    candidates, tag_skipped = image_candidates(
-        orthanc,
-        references,
-        config.max_frames_per_instance,
+    reference_limit = max(
         config.max_images_per_study,
+        config.max_dicom_instances_per_study if config.upload_original_dicoms else 0,
     )
+    references = instance_references(orthanc, study_id, reference_limit)
+    preview_references = references[:config.max_images_per_study]
+    candidates: list[tuple[str, str, dict[str, Any], int]] = []
+    tag_skipped = 0
+    if not previews_complete:
+        candidates, tag_skipped = image_candidates(
+            orthanc,
+            preview_references,
+            config.max_frames_per_instance,
+            config.max_images_per_study,
+        )
     expected_images = len(candidates) + tag_skipped
-    metadata = study_payload(study, expected_images)
+    expected_dicoms = len(references) if config.upload_original_dicoms else 0
+    metadata = study_payload(study, expected_images, expected_dicoms)
     response = webapp.post("upsert_study", study=metadata)
-    if not response.get("should_upload"):
-        if response.get("status") in {"READY", "IMPORTED", "REJECTED"}:
-            state.mark_completed(key)
+    status = response.get("status")
+    if status == "REJECTED":
+        state.mark_completed(key)
+        if config.upload_original_dicoms:
+            state.mark_dicoms_completed(key)
         return
 
     received = 0
     skipped = tag_skipped
-    for series_id, instance_id, tags, frame_index in candidates:
-        try:
-            raw = orthanc.preview(instance_id, frame_index)
-            bundle = make_jpeg_bundle(raw)
-            image = {
-                "orthanc_study_id": metadata["orthanc_study_id"],
-                "study_instance_uid": metadata["study_instance_uid"],
-                "orthanc_series_id": series_id,
-                "orthanc_instance_id": instance_id,
-                "sop_instance_uid": str(tags.get("SOPInstanceUID") or ""),
-                "frame_index": frame_index,
-                "original_filename": f"orthanc_{instance_id}_{frame_index}.jpg",
-                **bundle,
-            }
-            webapp.post("upload_image", image=image)
-            received += 1
-        except BridgeError as exc:
-            skipped += 1
-            LOGGER.warning("Instance %s dilewati: %s", instance_id, exc)
+    should_upload_images = bool(response.get("should_upload_images", response.get("should_upload")))
+    if should_upload_images and not previews_complete:
+        for series_id, instance_id, tags, frame_index in candidates:
+            try:
+                raw = orthanc.preview(instance_id, frame_index)
+                bundle = make_jpeg_bundle(raw)
+                image = {
+                    "orthanc_study_id": metadata["orthanc_study_id"],
+                    "study_instance_uid": metadata["study_instance_uid"],
+                    "orthanc_series_id": series_id,
+                    "orthanc_instance_id": instance_id,
+                    "sop_instance_uid": str(tags.get("SOPInstanceUID") or ""),
+                    "frame_index": frame_index,
+                    "original_filename": f"orthanc_{instance_id}_{frame_index}.jpg",
+                    **bundle,
+                }
+                webapp.post("upload_image", image=image)
+                received += 1
+            except BridgeError as exc:
+                skipped += 1
+                LOGGER.warning("Preview instance %s dilewati: %s", instance_id, exc)
 
-    message = ""
+    received_dicoms = 0
+    skipped_dicoms = 0
+    should_upload_dicoms = (
+        config.upload_original_dicoms
+        and not dicoms_complete
+        and bool(response.get("should_upload_dicoms"))
+    )
+    if should_upload_dicoms:
+        tag_cache = {instance_id: tags for _, instance_id, tags, _ in candidates}
+        for sequence, (series_id, instance_id) in enumerate(references, start=1):
+            try:
+                tags = tag_cache.get(instance_id) or orthanc.instance_tags(instance_id)
+                raw_dicom = orthanc.instance_file(instance_id)
+                digest = hashlib.sha256(raw_dicom).hexdigest()
+                dicom = {
+                    "orthanc_study_id": metadata["orthanc_study_id"],
+                    "study_instance_uid": metadata["study_instance_uid"],
+                    "orthanc_series_id": series_id,
+                    "orthanc_instance_id": instance_id,
+                    "sop_instance_uid": str(tags.get("SOPInstanceUID") or ""),
+                    "sequence_number": sequence,
+                    "original_filename": f"orthanc_{instance_id}.dcm",
+                    "file_size_bytes": len(raw_dicom),
+                    "sha256_hash": digest,
+                }
+                prepared = webapp.post("prepare_dicom_upload", dicom=dicom)
+                if prepared.get("should_upload"):
+                    drive_file_id = webapp.upload_dicom(str(prepared.get("upload_url") or ""), raw_dicom)
+                    webapp.post(
+                        "complete_dicom_upload",
+                        dicom={
+                            "orthanc_study_id": metadata["orthanc_study_id"],
+                            "study_instance_uid": metadata["study_instance_uid"],
+                            "dicom_id": prepared.get("dicom_id"),
+                            "drive_file_id": drive_file_id,
+                        },
+                    )
+                received_dicoms += 1
+            except BridgeError as exc:
+                skipped_dicoms += 1
+                LOGGER.warning("DICOM asli instance %s dilewati: %s", instance_id, exc)
+
+    messages: list[str] = []
     if skipped:
-        message = f"{skipped} instance atau frame tidak dapat dikonversi oleh OrthancBridge."
+        messages.append(f"{skipped} instance atau frame tidak dapat dikonversi oleh OrthancBridge.")
+    if skipped_dicoms:
+        messages.append(f"{skipped_dicoms} DICOM asli belum berhasil diunggah.")
     final = webapp.post(
         "finalize_study",
         study={
@@ -404,12 +512,23 @@ def sync_study(
             "study_instance_uid": metadata["study_instance_uid"],
             "expected_images": expected_images,
             "skipped_images": skipped,
-            "message": message,
+            "expected_dicoms": expected_dicoms,
+            "skipped_dicoms": skipped_dicoms,
+            "message": " ".join(messages),
         },
     )
-    if final.get("status") == "READY":
+    if final.get("status") in {"READY", "IMPORTED"}:
         state.mark_completed(key)
-    LOGGER.info("Studi %s selesai: %s gambar diterima, %s dilewati.", study_id, received, skipped)
+    if config.upload_original_dicoms and skipped_dicoms == 0 and int(final.get("received_dicoms") or 0) >= expected_dicoms:
+        state.mark_dicoms_completed(key)
+    LOGGER.info(
+        "Studi %s selesai: %s preview diterima, %s preview dilewati, %s DICOM asli diproses, %s DICOM dilewati.",
+        study_id,
+        received,
+        skipped,
+        received_dicoms,
+        skipped_dicoms,
+    )
 
 
 def sync_once(config: BridgeConfig, orthanc: OrthancClient, webapp: AppsScriptClient, state: SyncState) -> None:

@@ -19,13 +19,21 @@ function loginWithPassword(username, password) {
       throw appError_('INVALID_CREDENTIALS', 'Nama pengguna atau kata sandi salah.');
     }
 
-    var sessionToken = withScriptLock_(function () {
+    var loginResult = withScriptLock_(function () {
       var freshCredential = findRecord_('AUTH_CREDENTIALS', 'credential_id', credential.credential_id);
       updateRecord_('AUTH_CREDENTIALS', freshCredential._rowNumber, { failed_attempts: 0, locked_until: '', updated_at: now_() });
-      return createPasswordSession_(user);
+      return {
+        sessionToken: createPasswordSession_(user),
+        mustChangePassword: normalizeBoolean_(freshCredential.must_change_password)
+      };
     });
+    user._authMode = 'USERNAME_PASSWORD';
+    user._mustChangePassword = loginResult.mustChangePassword;
     writeAudit_(user, 'LOGIN_SUCCESS', '', '', { auth_provider: 'USERNAME_PASSWORD' });
-    return success_({ sessionToken: sessionToken });
+    return success_({
+      sessionToken: loginResult.sessionToken,
+      bootstrap: tryBuildAppBootstrap_(user)
+    });
   } catch (error) {
     if (error && error.code === 'INVALID_CREDENTIALS') {
       console.warn(JSON.stringify({ code: 'LOGIN_FAILED' }));
@@ -162,9 +170,14 @@ function changeOwnPassword(sessionToken, newPassword, confirmation) {
     assert_(!constantTimeEquals_(repeatedHash, normalizeString_(currentCredential.password_hash)),
       'PASSWORD_UNCHANGED', 'Kata sandi baru harus berbeda dari kata sandi sementara.');
 
+    var currentIterations = Number(currentCredential.hash_iterations);
     var iterations = getPasswordIterations_();
-    var salt = createSecureToken_();
-    var hash = derivePasswordHash_(suppliedPassword, salt, iterations);
+    var salt = normalizeString_(currentCredential.password_salt);
+    var hash = repeatedHash;
+    if (currentIterations !== iterations) {
+      salt = createSecureToken_();
+      hash = derivePasswordHash_(suppliedPassword, salt, iterations);
+    }
     var replacementToken = withScriptLock_(function () {
       var credential = findRecord_('AUTH_CREDENTIALS', 'user_id', user.user_id);
       assert_(credential, 'CREDENTIAL_NOT_FOUND', 'Kredensial akun tidak ditemukan. Hubungi administrator.');
@@ -184,8 +197,13 @@ function changeOwnPassword(sessionToken, newPassword, confirmation) {
       revokeSessionsForUser_(user.user_id);
       return createPasswordSession_(user);
     });
+    user._authMode = 'USERNAME_PASSWORD';
+    user._mustChangePassword = false;
     writeAudit_(user, 'PASSWORD_CHANGED', '', '', { auth_provider: 'USERNAME_PASSWORD' });
-    return success_({ sessionToken: replacementToken });
+    return success_({
+      sessionToken: replacementToken,
+      bootstrap: tryBuildAppBootstrap_(user)
+    });
   } catch (error) {
     return publicError_(error);
   } finally {
