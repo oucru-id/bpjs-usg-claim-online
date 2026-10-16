@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panduan Ringkas Petugas Klaim USG BPJS</title>
+  <style>
+    :root { --ink:#0b2146; --teal:#116f70; --teal-soft:#e6f3f2; --blue-soft:#f2f6fb; --line:#cdd9e7; --warn:#fff3d6; --red:#9b2c2c; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#e9eff6; color:#17233b; font-family:"Segoe UI",Arial,sans-serif; font-size:14px; line-height:1.45; }
+    main { max-width:900px; margin:24px auto; background:#fff; padding:38px 44px; box-shadow:0 10px 32px rgba(11,33,70,.12); }
+    h1,h2,h3 { color:var(--ink); margin:0; line-height:1.2; }
+    h1 { font-size:29px; }
+    h2 { font-size:19px; margin:22px 0 9px; padding-bottom:5px; border-bottom:2px solid var(--teal-soft); }
+    h3 { font-size:15px; margin:14px 0 5px; }
+    p { margin:6px 0 9px; }
+    ol,ul { margin:6px 0 10px; padding-left:22px; }
+    li { margin:3px 0; }
+    .kicker { color:var(--teal); font-size:12px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    .lead { font-size:16px; color:#425575; margin-top:9px; }
+    .flow { margin:18px 0; padding:13px 16px; border-radius:9px; background:var(--teal); color:#fff; font-weight:700; text-align:center; }
+    .important { padding:11px 14px; border-left:4px solid #d38a00; background:var(--warn); }
+    .security { padding:12px 15px; border-radius:8px; background:var(--blue-soft); border:1px solid var(--line); }
+    .choice-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .choice { padding:12px 14px; border:1px solid var(--line); border-radius:9px; break-inside:avoid; }
+    table { width:100%; border-collapse:collapse; margin:8px 0 12px; font-size:13px; }
+    th,td { border:1px solid var(--line); padding:7px 9px; vertical-align:top; }
+    th { background:var(--teal-soft); color:var(--ink); text-align:left; }
+    .help { display:grid; grid-template-columns:1fr 1fr; gap:7px 18px; }
+    .help p { margin:0; }
+    figure.shot { margin:12px 0 16px; padding:9px; border:1px solid var(--line); border-radius:9px; background:#fff; break-inside:avoid; }
+    figure.shot img { display:block; width:100%; max-height:520px; object-fit:contain; border-radius:5px; }
+    figure.shot.portrait { max-width:470px; margin-left:auto; margin-right:auto; }
+    figure.shot.login { max-width:520px; margin-left:auto; margin-right:auto; }
+    figure.shot figcaption { margin-top:7px; color:#526581; font-size:12px; text-align:center; }
+    .stop { color:var(--red); font-weight:700; }
+    footer { margin-top:18px; padding-top:10px; border-top:1px solid var(--line); color:#526581; font-size:12px; display:flex; justify-content:space-between; gap:12px; }
+    @media (max-width:700px) { main{margin:0;padding:24px 20px}.choice-grid,.help{grid-template-columns:1fr} }
+    @media print {
+      @page { size:A4; margin:12mm; }
+      body { background:#fff; font-size:10.2pt; }
+      main { max-width:none; margin:0; padding:0; box-shadow:none; }
+      h1 { font-size:22pt; } h2 { font-size:14pt; margin-top:13px; } h3 { font-size:11pt; }
+      .flow { margin:10px 0; } .choice { padding:8px 10px; }
+      ol,ul { margin-top:3px; margin-bottom:5px; } li { margin:1px 0; }
+      table { font-size:9.3pt; }
+      figure.shot { margin:7px 0 10px; padding:6px; }
+      figure.shot img { max-height:115mm; }
+      figure.shot.portrait img, figure.shot.login img { max-height:105mm; }
+      h2,h3,.choice,.important,.security,table,footer,figure.shot { break-inside:avoid; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <div class="kicker">Sistem Klaim USG BPJS</div>
+  <h1>Panduan Ringkas untuk Petugas Klaim</h1>
+  <p class="lead">Gunakan panduan ini untuk membuat klaim, melengkapi berkas, dan menghasilkan PDF klaim.</p>
+  <div class="important"><strong>Aturan utama:</strong> selalu cocokkan identitas pasien, tanggal pemeriksaan, dan semua berkas sebelum membuat PDF.</div>
+
+  <div class="flow">MASUK → AMBIL / BUAT KLAIM → PERIKSA PASIEN → LENGKAPI BERKAS → ATUR PDF → PRATINJAU → SELESAIKAN → KELUAR</div>
+
+  <h2>1. Masuk</h2>
+  <ol>
+    <li>Buka alamat aplikasi berakhiran <strong>/exec</strong> yang diberikan administrator.</li>
+    <li>Isi <strong>Nama pengguna</strong> dan <strong>Kata sandi</strong>, lalu pilih <strong>Masuk</strong>.</li>
+    <li>Jika diminta, buat kata sandi baru. Jangan membagikan kata sandi.</li>
+  </ol>
+  <figure class="shot login">
+    <img src="assets/panduan-petugas/01-masuk.png" alt="Halaman masuk aplikasi">
+    <figcaption>Gambar 1. Isi nama pengguna dan kata sandi, kemudian pilih <strong>Masuk</strong>.</figcaption>
+  </figure>
+
+  <h2>2. Mulai klaim</h2>
+  <div class="choice-grid">
+    <section class="choice">
+      <h3>A. Dari Orthanc</h3>
+      <ol>
+        <li><strong>Orthanc → Perbarui Daftar.</strong></li>
+        <li>Pada status <strong>Siap ditinjau</strong>, pilih <strong>Tinjau</strong>.</li>
+        <li>Cocokkan nama, NIK 16 angka, No. HP, Nama Dokter, tanggal lahir, tanggal USG, fasilitas, dan semua gambar.</li>
+        <li>Isi No. HP manual. ID pasien dari alat belum tentu NIK yang benar.</li>
+        <li>Pilih gambar yang benar, centang konfirmasi, lalu <strong>Buat Klaim dari Orthanc</strong>.</li>
+      </ol>
+      <p><strong>Abaikan Pemeriksaan</strong> hanya untuk data uji, duplikat, atau pemeriksaan yang tidak digunakan.</p>
+    </section>
+    <section class="choice">
+      <h3>B. Klaim baru manual</h3>
+      <ol>
+        <li><strong>Klaim → + Buat Klaim Baru.</strong></li>
+        <li>Isi nama, NIK 16 angka, No. HP (<strong>08...</strong> atau <strong>+628...</strong>), Nama Dokter, tanggal lahir, tanggal USG, dan fasilitas.</li>
+        <li>Periksa kembali, lalu pilih <strong>Simpan Klaim</strong>.</li>
+        <li>Jika status masih <strong>Draf</strong>, pilih <strong>Mulai Pengumpulan Berkas</strong>.</li>
+      </ol>
+    </section>
+  </div>
+  <figure class="shot">
+    <img src="assets/panduan-petugas/02-daftar-klaim.png" alt="Daftar klaim dan tombol membuat klaim baru">
+    <figcaption>Gambar 2. Gunakan <strong>+ Buat Klaim Baru</strong> atau kotak pencarian pada halaman Klaim.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="assets/panduan-petugas/03-orthanc.png" alt="Kotak masuk Orthanc">
+    <figcaption>Gambar 3. Pilih <strong>Perbarui Daftar</strong>, lalu tinjau pemeriksaan yang siap. Data DICOM tetap harus diverifikasi.</figcaption>
+  </figure>
+  <figure class="shot portrait">
+    <img src="assets/panduan-petugas/04-periksa-data.png" alt="Formulir pemeriksaan data klaim yang telah disamarkan">
+    <figcaption>Gambar 4. Periksa seluruh data pasien sebelum memilih <strong>Simpan Klaim</strong>. Data contoh telah disamarkan.</figcaption>
+  </figure>
+
+  <h2>3. Lengkapi dan periksa berkas</h2>
+  <ol>
+    <li>Jika gambar belum berasal dari Orthanc: <strong>Pilih Gambar USG</strong> → pilih JPEG/PNG → <strong>Unggah Gambar</strong>.</li>
+    <li>Unggah dokumen melalui kategori yang sesuai: <strong>KTP</strong>, <strong>Buku KIA</strong>, <strong>SPP &amp; FKPP BPJS</strong>, atau <strong>Berkas Lainnya</strong>.</li>
+    <li>Pilih satu PDF atau foto JPEG/PNG dan tunggu pesan berhasil sebelum berkas berikutnya. Jika perlu, pilih <strong>Perbarui Daftar</strong>.</li>
+    <li>Gunakan <strong>Lihat</strong> untuk memeriksa isi dan <strong>Putar 90°</strong> untuk memperbaiki arah.</li>
+    <li>Centang <strong>Sertakan dalam PDF</strong> hanya untuk berkas yang akan dikirim.</li>
+    <li>Atur urutan dengan menggeser kartu atau memakai <strong>Lebih awal / Lebih akhir</strong>.</li>
+  </ol>
+  <figure class="shot">
+    <img src="assets/panduan-petugas/05-unggah-berkas.png" alt="Tombol unggah gambar USG dan berkas pendukung">
+    <figcaption>Gambar 5. Pilih tombol unggah sesuai jenis berkas.</figcaption>
+  </figure>
+  <figure class="shot">
+    <img src="assets/panduan-petugas/06-atur-berkas.png" alt="Kontrol untuk memeriksa dan mengatur berkas">
+    <figcaption>Gambar 6. Gunakan <strong>Lihat</strong>, <strong>Putar 90°</strong>, <strong>Sertakan dalam PDF</strong>, serta <strong>Lebih awal / Lebih akhir</strong>. Pratinjau dokumen telah disamarkan.</figcaption>
+  </figure>
+
+  <h2>4. Buat, periksa, dan selesaikan PDF</h2>
+  <ol>
+    <li>Pastikan sedikitnya satu <strong>Gambar USG</strong> dipilih dan bagian <strong>Siapkan PDF Klaim</strong> menyatakan siap.</li>
+    <li>Pilih <strong>Buat PDF</strong> atau <strong>Buat Ulang PDF</strong>.</li>
+    <li>Periksa pasien, NIK, No. HP, Nama Dokter, tanggal USG, dan jumlah berkas. Centang konfirmasi pasien yang sama, lalu <strong>Ya, Buat PDF</strong>.</li>
+    <li>Pilih <strong>Pratinjau PDF</strong>. Periksa setiap halaman: identitas, isi, arah, urutan, dan keterbacaan.</li>
+    <li>Jika benar, pilih <strong>Unduh PDF</strong>, lalu <strong>Selesaikan Klaim</strong>.</li>
+  </ol>
+  <p class="stop">Setelah klaim selesai, perubahan dikunci. Jika ada kesalahan setelah PDF dibuat, jangan gunakan PDF tersebut; hubungi administrator.</p>
+  <figure class="shot">
+    <img src="assets/panduan-petugas/07-siapkan-pdf.png" alt="Bagian menyiapkan dan mengunduh PDF klaim">
+    <figcaption>Gambar 7. Pastikan status <strong>Siap dibuat PDF</strong>, kemudian buat, pratinjau, dan unduh PDF. Nama file telah disamarkan.</figcaption>
+  </figure>
+
+  <h2>5. Arti status</h2>
+  <table>
+    <thead><tr><th>Status</th><th>Tindakan petugas</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Draf</strong></td><td>Periksa data, lalu mulai pengumpulan berkas.</td></tr>
+      <tr><td><strong>Mengumpulkan berkas</strong></td><td>Perbaiki data dan lengkapi berkas.</td></tr>
+      <tr><td><strong>PDF dibuat</strong></td><td>Pratinjau, unduh, lalu selesaikan jika sudah benar.</td></tr>
+      <tr><td><strong>Selesai</strong></td><td>Klaim terkunci dan pekerjaan selesai.</td></tr>
+      <tr><td><strong>Diarsipkan</strong></td><td>Hubungi administrator jika perlu dibuka kembali.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>6. Kendala umum</h2>
+  <div class="help">
+    <p><strong>Klaim tidak ditemukan:</strong> cari dengan kode, nama, NIK, No. HP, Nama Dokter, status, atau tanggal USG.</p>
+    <p><strong>Orthanc belum tampil:</strong> pilih <strong>Perbarui Daftar</strong>; jika tetap tidak ada atau gagal diterima, hubungi administrator.</p>
+    <p><strong>Unggahan terasa berhenti:</strong> jangan langsung mengulang. Tunggu, perbarui daftar, lalu cek apakah berkas tersimpan.</p>
+    <p><strong>Data/berkas salah:</strong> hentikan proses dan perbaiki sebelum membuat PDF. Jika terkunci, hubungi administrator.</p>
+  </div>
+
+  <h2>7. Keamanan data pasien</h2>
+  <div class="security">
+    Gunakan hanya klaim dan fasilitas yang menjadi kewenangan Anda. Jangan membagikan kata sandi, tautan aplikasi, tangkapan layar pasien, atau PDF klaim melalui saluran yang tidak disetujui. Jangan tinggalkan halaman pasien terbuka pada perangkat bersama. Setelah bekerja, pilih <strong>Keluar</strong>.
+  </div>
+
+  <footer>
+    <span><strong>Bantuan administrator:</strong> ____________________</span>
+    <span><strong>Nomor kontak:</strong> ____________________</span>
+  </footer>
+</main>
+</body>
+</html>

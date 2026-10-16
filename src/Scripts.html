@@ -305,6 +305,7 @@
           claim.patient_name,
           claim.patient_nik,
           claim.patient_phone,
+          claim.doctor_name,
           formatIndonesianDate(claim.examination_date),
           claim.facility_name
         ];
@@ -355,7 +356,8 @@
         [
           formatIndonesianDateTime(item.updated_at),
           item.patient_name || 'Belum tersedia',
-          item.patient_id || 'Belum tersedia',
+          item.patient_nik_candidate || 'Belum tersedia',
+          item.doctor_name_candidate || 'Belum tersedia',
           formatIndonesianDate(item.study_date),
           String(item.received_images || 0) + (item.skipped_images ? ' (' + item.skipped_images + ' dilewati)' : '')
         ].forEach(function (value) {
@@ -395,16 +397,23 @@
           form.elements.patient_name.value = detail.patient_name || '';
           form.elements.patient_nik.value = detail.patient_nik_candidate || '';
           form.elements.patient_phone.value = '';
+          form.elements.doctor_name.value = detail.doctor_name_candidate || '';
           form.elements.patient_birth_date.value = detail.patient_birth_date || '';
           form.elements.examination_date.value = detail.study_date || '';
           populateOrthancFacilities(state.bootstrap.user.facility_id);
           var summary = [];
+          if (detail.patient_id) summary.push('ID alat: ' + detail.patient_id);
+          if (detail.patient_comments) summary.push('Comment: ' + detail.patient_comments);
+          if (detail.doctor_name_candidate) summary.push('Dokter terdeteksi: ' + detail.doctor_name_candidate);
           if (detail.study_description) summary.push(detail.study_description);
           if (detail.accession_number) summary.push('Nomor akses: ' + detail.accession_number);
           summary.push('DICOM asli: ' + (detail.received_dicoms || 0) + ' dari ' + (detail.expected_dicoms || 0));
           document.getElementById('orthanc-source-summary').textContent = summary.join(' - ') || 'Pemeriksaan dari Orthanc';
           var warnings = [];
-          if (!detail.patient_nik_candidate) warnings.push('PatientID DICOM bukan NIK 16 angka. Isi dan periksa NIK secara manual.');
+          if (detail.metadata_warning) warnings.push(detail.metadata_warning);
+          if (!detail.patient_name) warnings.push('Nama pasien tidak tersedia pada DICOM. Isi dan periksa secara manual.');
+          if (!detail.patient_nik_candidate) warnings.push('NIK 16 digit tidak ditemukan secara unik pada ID atau Comment DICOM. Isi dan periksa NIK secara manual.');
+          if (!detail.doctor_name_candidate) warnings.push('Nama dokter tidak ditemukan secara unik pada ID atau Comment DICOM.');
           if (!detail.patient_birth_date) warnings.push('Tanggal lahir tidak tersedia pada DICOM. Isi secara manual.');
           if (!detail.study_date) warnings.push('Tanggal pemeriksaan tidak tersedia atau tidak valid. Isi secara manual.');
           if (detail.skipped_images) warnings.push(detail.skipped_images + ' gambar/frame tidak dapat dikonversi atau melewati batas impor.');
@@ -437,12 +446,19 @@
       images.forEach(function (item, index) {
         var card = document.createElement('article'); card.className = 'orthanc-image-card';
         var image = document.createElement('img'); image.alt = 'Pratinjau gambar USG ' + (index + 1);
+        var previewButton = document.createElement('button');
+        previewButton.type = 'button';
+        previewButton.className = 'orthanc-preview-button';
+        previewButton.title = 'Buka pratinjau Gambar ' + (index + 1);
+        previewButton.setAttribute('aria-label', 'Buka pratinjau Gambar ' + (index + 1));
+        previewButton.addEventListener('click', function () { previewOrthancImage(item, index); });
+        previewButton.appendChild(image);
         var label = document.createElement('label');
         var checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = !item.imported;
         checkbox.disabled = item.imported; checkbox.dataset.orthancImageId = item.image_id;
         var text = document.createElement('span');
         text.textContent = 'Gambar ' + (index + 1) + ' - ' + item.image_width + ' x ' + item.image_height;
-        label.append(checkbox, text); card.append(image, label); grid.appendChild(card);
+        label.append(checkbox, text); card.append(previewButton, label); grid.appendChild(card);
         callServer('getOrthancInboxThumbnail', [item.image_id], function (content) {
           image.src = 'data:' + content.mime_type + ';base64,' + content.base64;
         }, null, function () { image.alt = 'Pratinjau tidak dapat dimuat'; });
@@ -494,6 +510,7 @@
         patient_name: form.elements.patient_name.value,
         patient_nik: form.elements.patient_nik.value.replace(/\D/g, ''),
         patient_phone: form.elements.patient_phone.value,
+        doctor_name: form.elements.doctor_name.value,
         patient_birth_date: form.elements.patient_birth_date.value,
         examination_date: form.elements.examination_date.value,
         facility_id: form.elements.facility_id.value,
@@ -554,11 +571,12 @@
       document.getElementById('claim-detail-name').textContent = claim.patient_name;
       document.getElementById('claim-detail-nik').textContent = claim.patient_nik;
       document.getElementById('claim-detail-phone').textContent = claim.patient_phone || '-';
+      document.getElementById('claim-detail-doctor').textContent = claim.doctor_name || '-';
       document.getElementById('claim-detail-birth-date').textContent = formatIndonesianDate(claim.patient_birth_date);
       document.getElementById('claim-detail-examination-date').textContent = formatIndonesianDate(claim.examination_date);
       document.getElementById('claim-detail-facility').textContent = claim.facility_name;
       document.getElementById('claim-detail-updated').textContent = formatIndonesianDateTime(claim.updated_at || claim.created_at);
-      var editable = ['DRAFT', 'COLLECTING_DOCUMENTS'].indexOf(claim.status) >= 0;
+      var editable = claim.status !== 'ARCHIVED';
       document.getElementById('edit-claim-button').classList.toggle('hidden', !editable);
       document.getElementById('start-collection-button').classList.toggle('hidden', claim.status !== 'DRAFT');
       document.getElementById('archive-claim-button').classList.toggle('hidden', state.bootstrap.user.role !== 'ADMIN' || claim.status === 'ARCHIVED');
@@ -588,6 +606,7 @@
         form.elements.patient_name.value = claim ? claim.patient_name : '';
         form.elements.patient_nik.value = claim ? claim.patient_nik : '';
         form.elements.patient_phone.value = claim ? claim.patient_phone : '';
+        form.elements.doctor_name.value = claim ? claim.doctor_name : '';
         form.elements.patient_birth_date.value = claim ? claim.patient_birth_date : '';
         form.elements.examination_date.value = claim ? claim.examination_date : '';
         populateClaimFacilities(claim ? claim.facility_id : state.bootstrap.user.facility_id);
@@ -608,11 +627,19 @@
     function saveClaim(event) {
       event.preventDefault();
       var form = event.currentTarget;
+      var previousStatus = state.currentClaim && form.elements.claim_id.value
+        ? state.currentClaim.status
+        : '';
+      if (['READY', 'PDF_GENERATED', 'COMPLETED'].indexOf(previousStatus) >= 0 &&
+          !window.confirm('Menyimpan perubahan akan membuka kembali klaim ini. PDF lama tetap tersimpan sebagai riwayat, tetapi PDF klaim harus dibuat ulang. Lanjutkan?')) {
+        return;
+      }
       var payload = {
         claim_id: form.elements.claim_id.value,
         patient_name: form.elements.patient_name.value,
         patient_nik: form.elements.patient_nik.value.replace(/\D/g, ''),
         patient_phone: form.elements.patient_phone.value,
+        doctor_name: form.elements.doctor_name.value,
         patient_birth_date: form.elements.patient_birth_date.value,
         examination_date: form.elements.examination_date.value,
         facility_id: form.elements.facility_id.value
@@ -620,7 +647,10 @@
       var endpoint = payload.claim_id ? 'updateClaim' : 'createClaim';
       callServer(endpoint, [payload], function (claim) {
         document.getElementById('claim-dialog').close();
-        showMessage(payload.claim_id ? 'Data klaim berhasil diperbarui.' : 'Klaim baru berhasil dibuat.', false);
+        var reopenedByEdit = payload.claim_id && ['READY', 'PDF_GENERATED', 'COMPLETED'].indexOf(previousStatus) >= 0;
+        showMessage(reopenedByEdit
+          ? 'Data klaim berhasil diperbarui dan klaim dibuka kembali. Buat ulang PDF sebelum menyelesaikan klaim.'
+          : (payload.claim_id ? 'Data klaim berhasil diperbarui.' : 'Klaim baru berhasil dibuat.'), false);
         openClaimDetail(claim.claim_id);
       }, document.getElementById('save-claim-button'));
     }
@@ -966,7 +996,7 @@
       document.getElementById('complete-claim-button').classList.toggle('hidden',
         !preparation.can_generate_pdf || preparation.status !== 'PDF_GENERATED');
       document.getElementById('reopen-claim-button').classList.toggle('hidden',
-        !(state.bootstrap && state.bootstrap.user.role === 'ADMIN' && preparation.status === 'COMPLETED'));
+        preparation.status !== 'COMPLETED');
     }
 
     function renderPdfPreparationError(message) {
@@ -994,6 +1024,7 @@
       document.getElementById('pdf-confirm-patient').textContent = state.currentClaim.patient_name;
       document.getElementById('pdf-confirm-nik').textContent = state.currentClaim.patient_nik;
       document.getElementById('pdf-confirm-phone').textContent = state.currentClaim.patient_phone || '-';
+      document.getElementById('pdf-confirm-doctor').textContent = state.currentClaim.doctor_name || '-';
       document.getElementById('pdf-confirm-date').textContent = formatIndonesianDate(preparation.examination_date);
       var counts = document.getElementById('pdf-confirm-counts');
       counts.textContent = '';
@@ -1039,11 +1070,19 @@
           progress.classList.add('error');
           progress.textContent += ' PDF utama aman, tetapi backup Drive kedua gagal: ' + data.backup.message;
         }
+        if (data.verifier && data.verifier.status === 'READY') {
+          progress.textContent += ' PDF berhasil dikirim ke Drive verifikator.';
+        } else if (data.verifier && data.verifier.status === 'ERROR') {
+          progress.classList.add('error');
+          progress.textContent += ' PDF utama aman, tetapi pengiriman ke Drive verifikator gagal: ' + data.verifier.message;
+        }
         state.currentClaim = data.claim;
         renderClaimDetail(data.claim);
-        showMessage(data.backup && data.backup.status === 'ERROR'
-          ? 'PDF berhasil dibuat, tetapi backup Drive kedua perlu diperiksa.'
-          : 'PDF klaim berhasil dibuat.', Boolean(data.backup && data.backup.status === 'ERROR'));
+        var deliveryError = data.backup && data.backup.status === 'ERROR' ||
+          data.verifier && data.verifier.status === 'ERROR';
+        showMessage(deliveryError
+          ? 'PDF berhasil dibuat, tetapi satu atau lebih salinan Drive perlu diperiksa.'
+          : 'PDF klaim berhasil dibuat dan tujuan Drive aktif telah diperbarui.', Boolean(deliveryError));
       }, button, function (message, code) {
         progress.classList.add('error');
         progress.textContent = message;
@@ -1130,21 +1169,42 @@
       }, button);
     }
 
-    function previewDocument(item) {
+    function openImagePreview(title, endpoint, args, altText) {
       var dialog = document.getElementById('preview-dialog');
       var image = document.getElementById('preview-image');
       image.classList.add('hidden');
       image.removeAttribute('src');
-      document.getElementById('preview-loading').classList.remove('hidden');
-      document.getElementById('preview-title').textContent = documentTypeLabel(item.document_type);
+      image.alt = altText || 'Pratinjau gambar';
+      var loading = document.getElementById('preview-loading');
+      loading.textContent = 'Memuat gambar...';
+      loading.classList.remove('hidden');
+      document.getElementById('preview-title').textContent = title;
       dialog.showModal();
-      callServer('getDocumentPreview', [item.document_id], function (content) {
+      callServer(endpoint, args, function (content) {
         image.src = 'data:' + content.mime_type + ';base64,' + content.base64;
         image.classList.remove('hidden');
-        document.getElementById('preview-loading').classList.add('hidden');
+        loading.classList.add('hidden');
       }, null, function (message) {
-        document.getElementById('preview-loading').textContent = message;
+        loading.textContent = message;
       });
+    }
+
+    function previewOrthancImage(item, index) {
+      openImagePreview('Gambar USG ' + (index + 1), 'getOrthancInboxPreview', [item.image_id],
+        'Pratinjau lengkap gambar USG ' + (index + 1));
+    }
+
+    function previewDocument(item) {
+      openImagePreview(documentTypeLabel(item.document_type), 'getDocumentPreview', [item.document_id],
+        'Pratinjau ' + documentTypeLabel(item.document_type));
+    }
+
+    function closeImagePreview() {
+      var dialog = document.getElementById('preview-dialog');
+      if (dialog.open) dialog.close();
+      var image = document.getElementById('preview-image');
+      image.classList.add('hidden');
+      image.removeAttribute('src');
     }
 
     function deleteUploadedDocument(item, mobileMode, button) {
@@ -1786,7 +1846,12 @@
       input.addEventListener('change', function () { uploadMobileFile(input); });
     });
     document.getElementById('finish-mobile-upload-button').addEventListener('click', finishMobileUpload);
-    document.getElementById('close-preview-dialog').addEventListener('click', function () { document.getElementById('preview-dialog').close(); });
+    document.getElementById('close-preview-dialog').addEventListener('click', closeImagePreview);
+    document.getElementById('preview-dialog').addEventListener('close', function () {
+      var image = document.getElementById('preview-image');
+      image.classList.add('hidden');
+      image.removeAttribute('src');
+    });
     document.getElementById('generate-pdf-button').addEventListener('click', openPdfConfirmation);
     document.getElementById('close-pdf-confirm-dialog').addEventListener('click', function () { document.getElementById('pdf-confirm-dialog').close(); });
     document.getElementById('cancel-pdf-button').addEventListener('click', function () { document.getElementById('pdf-confirm-dialog').close(); });

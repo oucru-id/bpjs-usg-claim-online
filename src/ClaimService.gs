@@ -18,7 +18,7 @@ function listClaims(sessionToken, filters) {
       if (status && claimStatus !== status) return false;
       if (examinationDate && claimDateKey_(claim.examination_date) !== examinationDate) return false;
       if (!search) return true;
-      return [claim.claim_code, claim.patient_name, claim.patient_nik, claim.patient_phone].some(function (value) {
+      return [claim.claim_code, claim.patient_name, claim.patient_nik, claim.patient_phone, claim.doctor_name].some(function (value) {
         return normalizeString_(value).toLowerCase().indexOf(search) >= 0;
       });
     });
@@ -88,6 +88,7 @@ function createClaim(sessionToken, payload) {
         patient_name: values.patient_name,
         patient_nik: values.patient_nik,
         patient_phone: values.patient_phone,
+        doctor_name: values.doctor_name,
         patient_birth_date: values.patient_birth_date,
         examination_date: values.examination_date,
         status: CLAIM_STATUSES.DRAFT,
@@ -122,30 +123,58 @@ function createClaim(sessionToken, payload) {
 function updateClaim(sessionToken, payload) {
   try {
     var user = requireAuthenticatedUser(sessionToken);
-    var updated = withScriptLock_(function () {
+    var result = withScriptLock_(function () {
       var claim = requireAccessibleClaim_(user, payload && payload.claim_id);
-      var status = normalizeString_(claim.status).toUpperCase();
-      assert_([CLAIM_STATUSES.DRAFT, CLAIM_STATUSES.COLLECTING_DOCUMENTS].indexOf(status) >= 0,
+      var previousStatus = normalizeString_(claim.status).toUpperCase();
+      assert_([
+        CLAIM_STATUSES.DRAFT,
+        CLAIM_STATUSES.COLLECTING_DOCUMENTS,
+        CLAIM_STATUSES.READY,
+        CLAIM_STATUSES.PDF_GENERATED,
+        CLAIM_STATUSES.COMPLETED
+      ].indexOf(previousStatus) >= 0,
         'CLAIM_NOT_EDITABLE', 'Klaim pada status ini tidak dapat diubah.');
       var values = validateClaimPayload_(user, payload || {}, claim);
+      var reopenedByEdit = [
+        CLAIM_STATUSES.READY,
+        CLAIM_STATUSES.PDF_GENERATED,
+        CLAIM_STATUSES.COMPLETED
+      ].indexOf(previousStatus) >= 0;
       var changes = {
         patient_name: values.patient_name,
         patient_nik: values.patient_nik,
         patient_phone: values.patient_phone,
+        doctor_name: values.doctor_name,
         patient_birth_date: values.patient_birth_date,
         examination_date: values.examination_date,
         updated_by: user.google_email,
         updated_at: now_()
       };
+      if (reopenedByEdit) {
+        changes.status = CLAIM_STATUSES.COLLECTING_DOCUMENTS;
+        changes.completed_at = '';
+      }
       updateRecord_('CLAIMS', claim._rowNumber, changes);
       Object.keys(changes).forEach(function (key) { claim[key] = changes[key]; });
-      return claim;
+      return {
+        claim: claim,
+        previousStatus: previousStatus,
+        reopenedByEdit: reopenedByEdit
+      };
     });
-    writeAudit_(user, 'CLAIM_UPDATED', updated.claim_id, '', {
-      claim_code: updated.claim_code,
-      status: updated.status
+    writeAudit_(user, 'CLAIM_UPDATED', result.claim.claim_id, '', {
+      claim_code: result.claim.claim_code,
+      previous_status: result.previousStatus,
+      status: result.claim.status
     });
-    return success_(claimDetailForClient_(updated));
+    if (result.reopenedByEdit) {
+      writeAudit_(user, 'CLAIM_REOPENED', result.claim.claim_id, '', {
+        claim_code: result.claim.claim_code,
+        previous_status: result.previousStatus,
+        reason: 'CLAIM_DATA_EDITED'
+      });
+    }
+    return success_(claimDetailForClient_(result.claim));
   } catch (error) {
     return publicError_(error);
   }
@@ -211,6 +240,7 @@ function validateClaimPayload_(user, payload, existingClaim) {
   var patientName = sanitizePlainText_(payload.patient_name, 120);
   var patientNik = normalizeString_(payload.patient_nik).replace(/\s/g, '');
   var patientPhone = normalizePatientPhone_(payload.patient_phone);
+  var doctorName = normalizeDoctorName_(payload.doctor_name);
   var facilityId = existingClaim
     ? normalizeString_(existingClaim.facility_id)
     : normalizeString_(payload.facility_id || user.facility_id);
@@ -231,6 +261,7 @@ function validateClaimPayload_(user, payload, existingClaim) {
     patient_name: patientName,
     patient_nik: patientNik,
     patient_phone: patientPhone,
+    doctor_name: doctorName,
     patient_birth_date: birthDate,
     examination_date: examinationDate,
     facility_id: facilityId
@@ -248,6 +279,12 @@ function normalizePatientPhone_(value) {
   assert_(/^08\d{8,11}$/.test(digits), 'INVALID_PATIENT_PHONE',
     'No. HP harus diawali 08 atau +628 dan terdiri dari 10-13 angka.');
   return digits;
+}
+
+function normalizeDoctorName_(value) {
+  var doctorName = sanitizePlainText_(value, 120);
+  assert_(doctorName.length >= 2, 'DOCTOR_NAME_REQUIRED', 'Nama Dokter wajib diisi.');
+  return doctorName;
 }
 
 function parseClaimDate_(value, fieldName) {
@@ -289,6 +326,7 @@ function claimListItem_(claim, facilities) {
     patient_name: normalizeString_(claim.patient_name),
     patient_nik: normalizeString_(claim.patient_nik),
     patient_phone: normalizeString_(claim.patient_phone),
+    doctor_name: normalizeString_(claim.doctor_name),
     examination_date: claimDateKey_(claim.examination_date),
     status: normalizeString_(claim.status).toUpperCase(),
     facility_id: normalizeString_(claim.facility_id),
@@ -313,6 +351,7 @@ function claimDetailForClient_(claim) {
     patient_name: normalizeString_(claim.patient_name),
     patient_nik: normalizeString_(claim.patient_nik),
     patient_phone: normalizeString_(claim.patient_phone),
+    doctor_name: normalizeString_(claim.doctor_name),
     patient_nik_masked: maskNik(claim.patient_nik),
     patient_birth_date: claimDateKey_(claim.patient_birth_date),
     examination_date: claimDateKey_(claim.examination_date),

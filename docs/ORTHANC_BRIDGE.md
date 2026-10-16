@@ -6,13 +6,13 @@ OrthancBridge adalah program pendamping pada PC Puskesmas. Program ini hanya mem
 
 1. Alat USG mengirim DICOM ke Orthanc.
 2. OrthancBridge mencari studi terbaru yang sudah stabil.
-3. Metadata pasien dibaca dari tag DICOM, preview gambar dikonversi menjadi JPEG, dan setiap instance DICOM asli diunggah secara resumable ke Drive privat.
+3. Metadata pasien dibaca dari tag DICOM. `PatientID` dan `PatientComments` diperiksa bersama untuk menemukan NIK 16 digit dan nama dokter, preview gambar dikonversi menjadi JPEG, dan setiap instance DICOM asli diunggah secara resumable ke Drive privat.
 4. Data masuk ke **Kotak Masuk Orthanc** pada web app; setiap DICOM asli langsung disalin ke subfolder `DICOM RAW` pada Drive cadangan tanpa menunggu klaim dikonfirmasi.
-5. Petugas meninjau nama, NIK, mengisi No. HP, lalu memeriksa tanggal lahir, tanggal pemeriksaan, dan gambar.
+5. Petugas meninjau nama pasien, NIK, mengisi No. HP, memeriksa atau mengoreksi Nama Dokter, lalu memeriksa tanggal lahir, tanggal pemeriksaan, dan gambar. Thumbnail dapat diklik untuk membuka gambar berukuran lebih besar tanpa mengubah pilihan gambar.
 6. Setelah konfirmasi, aplikasi membuat klaim dengan status **Mengumpulkan berkas**, menyalin gambar USG, dan memindahkan salinan DICOM asli ke subfolder privat `DICOM` milik klaim.
 7. Jika backup Drive kedua diaktifkan, salinan terkait klaim disimpan terpisah di `DICOM`, dan PDF klaim disimpan di `KLAIM`.
 
-Bridge tidak langsung membuat klaim. Konfirmasi petugas wajib karena `PatientID` dapat berisi nomor rekam medis dan bukan NIK.
+Bridge tidak langsung membuat klaim. Konfirmasi petugas wajib karena `PatientID` dan `PatientComments` dapat kosong, tertukar antara NIK dan nama dokter, atau berisi nilai yang bertentangan.
 
 ## 1. Perbarui Apps Script
 
@@ -20,9 +20,9 @@ Bridge tidak langsung membuat klaim. Konfirmasi petugas wajib karena `PatientID`
 2. Jalankan `setupApplication()` sebagai administrator pemasang.
 3. Pastikan hasil setup memuat sheet `ORTHANC_INBOX` dan `ORTHANC_IMAGES`.
 4. Buat deployment web app versi baru.
-5. Muat ulang URL `/exec` dan pastikan versi `6.7.0-supporting-pdf-files` tampil.
+5. Muat ulang URL `/exec` dan pastikan versi `6.10.1-verifier-readable-filenames` tampil.
 
-Setup menambah kolom `patient_phone` pada `CLAIMS`, kolom referensi Orthanc pada `DOCUMENTS`, sheet `ORTHANC_INBOX`, `ORTHANC_IMAGES`, dan `ORTHANC_DICOMS`, serta folder privat `SYSTEM/ORTHANC_INBOX`. Setup tidak menghapus klaim atau dokumen lama. Karena versi aplikasi berubah, sesi lama dicabut satu kali dan pengguna perlu masuk kembali.
+Setup menambahkan kolom metadata `patient_comments`, `doctor_name_candidate`, dan `metadata_warning` pada `ORTHANC_INBOX` secara aman, selain memastikan seluruh sheet/folder Orthanc tersedia. Setup tidak menghapus klaim atau dokumen lama. Karena versi aplikasi berubah, sesi lama dicabut satu kali dan pengguna perlu masuk kembali.
 
 ## 2. Buat kunci koneksi
 
@@ -70,9 +70,11 @@ Hasil yang diharapkan:
 
 - log menampilkan koneksi ke Orthanc dan Apps Script berhasil;
 - pemeriksaan muncul pada menu **Orthanc**;
-- nama, PatientID, tanggal lahir, dan tanggal pemeriksaan dapat ditinjau;
-- thumbnail tampil;
+- nama pasien, nilai mentah PatientID/PatientComments, NIK dan dokter yang terdeteksi, tanggal lahir, serta tanggal pemeriksaan dapat ditinjau;
+- thumbnail tampil dan dapat diklik untuk membuka pratinjau gambar yang lebih besar;
 - tidak ada klaim yang dibuat sebelum petugas mengonfirmasi.
+
+Pratinjau besar membantu petugas membaca teks yang tercetak pada gambar USG ketika metadata nama atau NIK kosong. Teks pada gambar hanya petunjuk visual: petugas tetap harus mencocokkannya dengan sumber identitas pasien sebelum membuat klaim.
 
 Log disimpan pada `orthanc-bridge/logs/orthanc-bridge.log`. Log tidak memuat nama pasien, NIK, atau gambar.
 
@@ -117,12 +119,15 @@ Bridge mengambil `/instances/{id}/file` dari Orthanc dan mengirim byte DICOM asl
 | Tag DICOM | Isian web app | Aturan |
 |---|---|---|
 | `PatientName` | Nama pasien | Tanda `^` diubah menjadi spasi; petugas wajib memeriksa |
-| `PatientID` | Calon NIK | Diisi otomatis hanya jika menghasilkan tepat 16 angka |
+| `PatientID` dan `PatientComments` | Calon NIK | Keduanya diperiksa; diisi otomatis hanya jika ditemukan tepat satu nilai yang menghasilkan 16 angka |
+| `PatientID` dan `PatientComments` | Calon nama dokter | Teks non-NIK digunakan sebagai kandidat; duplikat yang sama digabung dan nilai berbeda tidak dipilih otomatis |
 | Tidak tersedia | No. HP | Wajib diisi dan diperiksa manual oleh petugas |
 | `PatientBirthDate` | Tanggal lahir | Jika kosong/tidak valid harus diisi petugas |
 | `StudyDate` | Tanggal pemeriksaan USG | Jika kosong/tidak valid harus diisi petugas |
 | `StudyInstanceUID` | Identitas pemeriksaan | Digunakan untuk mencegah studi yang sama diimpor dua kali |
 | `SOPInstanceUID` | Identitas gambar | Disimpan untuk ketertelusuran |
+
+Jika dua NIK berbeda atau dua nama dokter berbeda ditemukan, aplikasi mengosongkan kandidat yang bertentangan dan menampilkan peringatan. Nama pasien, NIK, dan gambar tetap wajib diperiksa oleh petugas sebelum klaim dibuat. Nama dokter yang terdeteksi disimpan sebagai metadata sumber pada `ORTHANC_INBOX`; versi ini belum menambahkannya sebagai kolom data klaim atau pada PDF klaim.
 
 ## Gambar dan cine
 

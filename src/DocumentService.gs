@@ -487,7 +487,7 @@ function batchUpdateDocumentOrder_(orderedIds, existingById, user, timestamp) {
   var sheet = getSheet_('DOCUMENTS');
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
-  var headers = SHEET_SCHEMAS.DOCUMENTS;
+  var headers = assertSheetSchemaCurrent_('DOCUMENTS', sheet);
   var values = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
   var orderIndex = headers.indexOf('display_order');
   var updatedByIndex = headers.indexOf('updated_by');

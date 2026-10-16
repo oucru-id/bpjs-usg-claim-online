@@ -55,7 +55,7 @@
         <button id="new-claim-button" class="primary hidden" type="button">+ Buat Klaim Baru</button>
       </div>
       <form id="claim-filter-form" class="card filter-form">
-        <label>Cari klaim<input name="search" type="search" maxlength="120" placeholder="Kode klaim, nama pasien, NIK, atau No. HP"></label>
+        <label>Cari klaim<input name="search" type="search" maxlength="120" placeholder="Kode klaim, pasien, NIK, No. HP, atau dokter"></label>
         <label>Status<select name="status"><option value="">Semua status aktif</option><option value="DRAFT">Draf</option><option value="COLLECTING_DOCUMENTS">Mengumpulkan berkas</option><option value="READY">Siap</option><option value="PDF_GENERATED">PDF dibuat</option><option value="COMPLETED">Selesai</option><option value="ARCHIVED">Diarsipkan</option></select></label>
         <label>Tanggal pemeriksaan<input name="examination_date" type="date"></label>
         <label id="include-archived-label" class="check admin-only hidden"><input name="include_archived" type="checkbox"> Sertakan arsip</label>
@@ -63,7 +63,7 @@
       </form>
       <div id="claim-summary" class="grid three summary-grid"></div>
       <div class="card table-wrap">
-        <table class="claims-table"><thead><tr><th>Kode klaim</th><th>Pasien</th><th>NIK</th><th>No. HP</th><th>Tanggal USG</th><th>Fasilitas</th><th>Status</th><th></th></tr></thead><tbody id="claims-body"></tbody></table>
+        <table class="claims-table"><thead><tr><th>Kode klaim</th><th>Pasien</th><th>NIK</th><th>No. HP</th><th>Nama Dokter</th><th>Tanggal USG</th><th>Fasilitas</th><th>Status</th><th></th></tr></thead><tbody id="claims-body"></tbody></table>
         <p id="claims-empty" class="empty-state hidden">Belum ada klaim yang sesuai.</p>
       </div>
     </section>
@@ -73,10 +73,10 @@
         <div><h1>Kotak Masuk Orthanc</h1><p>Pilih pemeriksaan USG yang sudah dikirim dari alat ke Orthanc, lalu periksa data pasien sebelum membuat klaim.</p></div>
         <button id="refresh-orthanc-button" class="primary" type="button">Perbarui Daftar</button>
       </div>
-      <p class="warning-box">Data DICOM adalah data awal. Pastikan nama, NIK, No. HP, tanggal lahir, tanggal pemeriksaan, dan seluruh gambar benar sebelum membuat klaim.</p>
+      <p class="warning-box">Data DICOM adalah data awal. Pastikan nama pasien, NIK, No. HP, Nama Dokter, tanggal lahir, tanggal pemeriksaan, dan seluruh gambar benar sebelum membuat klaim.</p>
       <label class="check orthanc-processed-filter"><input id="orthanc-include-processed" type="checkbox"> Tampilkan pemeriksaan yang sudah diimpor atau diabaikan</label>
       <div class="card table-wrap">
-        <table class="orthanc-table"><thead><tr><th>Diterima</th><th>Pasien</th><th>ID pasien</th><th>Tanggal USG</th><th>Gambar</th><th>Status</th><th></th></tr></thead><tbody id="orthanc-inbox-body"></tbody></table>
+        <table class="orthanc-table"><thead><tr><th>Diterima</th><th>Pasien</th><th>NIK terdeteksi</th><th>Dokter terdeteksi</th><th>Tanggal USG</th><th>Gambar</th><th>Status</th><th></th></tr></thead><tbody id="orthanc-inbox-body"></tbody></table>
         <p id="orthanc-inbox-empty" class="empty-state hidden">Belum ada pemeriksaan dari OrthancBridge.</p>
       </div>
     </section>
@@ -90,6 +90,7 @@
         <article class="card detail-card"><span class="detail-label">Nama pasien</span><strong id="claim-detail-name">-</strong></article>
         <article class="card detail-card"><span class="detail-label">NIK</span><strong id="claim-detail-nik">-</strong></article>
         <article class="card detail-card"><span class="detail-label">No. HP</span><strong id="claim-detail-phone">-</strong></article>
+        <article class="card detail-card"><span class="detail-label">Nama Dokter</span><strong id="claim-detail-doctor">-</strong></article>
         <article class="card detail-card"><span class="detail-label">Tanggal lahir</span><strong id="claim-detail-birth-date">-</strong></article>
         <article class="card detail-card"><span class="detail-label">Tanggal pemeriksaan USG</span><strong id="claim-detail-examination-date">-</strong></article>
         <article class="card detail-card"><span class="detail-label">Fasilitas</span><strong id="claim-detail-facility">-</strong></article>
@@ -263,6 +264,7 @@
       <label>Nama pasien<input name="patient_name" required minlength="2" maxlength="120" autocomplete="off"></label>
       <label>NIK<input name="patient_nik" required inputmode="numeric" pattern="[0-9]{16}" minlength="16" maxlength="16" autocomplete="off"><span class="muted">Masukkan tepat 16 angka.</span></label>
       <label>No. HP<input name="patient_phone" type="tel" required minlength="10" maxlength="20" autocomplete="tel"><span class="muted">Gunakan format 08... atau +628....</span></label>
+      <label>Nama Dokter<input name="doctor_name" required minlength="2" maxlength="120" autocomplete="off"></label>
       <div class="grid two form-grid">
         <label>Tanggal lahir<input name="patient_birth_date" type="date" required></label>
         <label>Tanggal pemeriksaan USG<input name="examination_date" type="date" required></label>
@@ -278,8 +280,9 @@
       <p id="orthanc-source-summary" class="muted"></p>
       <div id="orthanc-import-warning" class="warning-box hidden"></div>
       <label>Nama pasien<input name="patient_name" required minlength="2" maxlength="120" autocomplete="off"></label>
-      <label>NIK<input name="patient_nik" required inputmode="numeric" pattern="[0-9]{16}" minlength="16" maxlength="16" autocomplete="off"><span class="muted">PatientID hanya digunakan otomatis apabila terdiri dari tepat 16 angka.</span></label>
+      <label>NIK<input name="patient_nik" required inputmode="numeric" pattern="[0-9]{16}" minlength="16" maxlength="16" autocomplete="off"><span class="muted">NIK diisi otomatis bila tepat 16 angka ditemukan pada ID atau Comment DICOM. Tetap periksa sebelum membuat klaim.</span></label>
       <label>No. HP<input name="patient_phone" type="tel" required minlength="10" maxlength="20" autocomplete="tel"><span class="muted">No. HP tidak tersedia dari DICOM. Isi format 08... atau +628....</span></label>
+      <label>Nama Dokter<input name="doctor_name" required minlength="2" maxlength="120" autocomplete="off"><span class="muted">Diisi otomatis bila satu nama dokter terdeteksi pada ID atau Comment DICOM. Tetap periksa sebelum membuat klaim.</span></label>
       <div class="grid two form-grid">
         <label>Tanggal lahir<input name="patient_birth_date" type="date" required></label>
         <label>Tanggal pemeriksaan USG<input name="examination_date" type="date" required></label>
@@ -287,6 +290,7 @@
       <label>Fasilitas<select name="facility_id" required></select></label>
       <fieldset>
         <legend>Pilih gambar USG</legend>
+        <p class="muted orthanc-preview-hint">Klik gambar untuk membuka pratinjau yang lebih besar. Pilihan gambar tidak berubah saat pratinjau dibuka.</p>
         <div id="orthanc-image-grid" class="document-grid orthanc-image-grid"></div>
         <p id="orthanc-images-empty" class="empty-state hidden">Tidak ada gambar yang dapat diimpor.</p>
       </fieldset>
@@ -318,6 +322,7 @@
       <p>Pasien: <strong id="pdf-confirm-patient">-</strong></p>
       <p>NIK: <strong id="pdf-confirm-nik">-</strong></p>
       <p>No. HP: <strong id="pdf-confirm-phone">-</strong></p>
+      <p>Nama Dokter: <strong id="pdf-confirm-doctor">-</strong></p>
       <p>Tanggal USG: <strong id="pdf-confirm-date">-</strong></p>
       <div id="pdf-confirm-counts" class="confirmation-counts"></div>
       <p class="warning-box">Pastikan seluruh gambar dan berkas berasal dari pasien yang sama.</p>

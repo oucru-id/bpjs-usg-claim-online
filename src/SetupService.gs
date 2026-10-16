@@ -15,6 +15,7 @@ function setupApplication() {
     var systemFolder = getOrCreateConfiguredFolder_(SCRIPT_PROPERTY_KEYS.SYSTEM_FOLDER_ID, APP_CONFIG.SYSTEM_FOLDER_NAME, rootFolder);
     var orthancInboxFolder = getOrCreateConfiguredFolder_(SCRIPT_PROPERTY_KEYS.ORTHANC_INBOX_FOLDER_ID, 'ORTHANC_INBOX', systemFolder);
     var spreadsheet = getOrCreateDatabase_(systemFolder);
+    var claimDoctorRepair = repairClaimDoctorSchemaMigration_(spreadsheet);
 
     Object.keys(SHEET_SCHEMAS).forEach(function (sheetName) {
       ensureSheetSchema_(spreadsheet, sheetName, SHEET_SCHEMAS[sheetName]);
@@ -65,7 +66,10 @@ function setupApplication() {
       adminEmail: effectiveAdmin,
       workspaceDomain: properties.getProperty('WORKSPACE_DOMAIN') || domain,
       sheets: Object.keys(SHEET_SCHEMAS),
-      message: 'Setup selesai. Verifikasi hasil dan lanjutkan deployment sesuai docs/DEPLOYMENT.md.'
+      repairedClaimDoctorRows: claimDoctorRepair.repairedRows,
+      message: claimDoctorRepair.repairedRows
+        ? 'Setup selesai dan ' + claimDoctorRepair.repairedRows + ' baris klaim yang bergeser telah dipulihkan. Verifikasi hasil sebelum melanjutkan deployment.'
+        : 'Setup selesai. Verifikasi hasil dan lanjutkan deployment sesuai docs/DEPLOYMENT.md.'
     };
   });
 }

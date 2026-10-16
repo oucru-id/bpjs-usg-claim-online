@@ -24,6 +24,7 @@ function generateClaimPdf(sessionToken, payload) {
   var outputFile = null;
   var temporaryFile = null;
   var backupResult = { status: 'DISABLED', filename: '' };
+  var verifierResult = { status: 'DISABLED', filename: '' };
   try {
     var user = requirePermission('can_generate_pdf', sessionToken);
     assert_(normalizeBoolean_(payload && payload.confirmed_same_patient),
@@ -76,18 +77,21 @@ function generateClaimPdf(sessionToken, payload) {
       };
     });
     backupResult = backupClaimPdfSafely_(result.claim, outputFile);
+    verifierResult = deliverClaimPdfToVerifierSafely_(result.claim, outputFile);
     writeAudit_(user, 'PDF_GENERATED', result.claim.claim_id, '', {
       storage_filename: result.storageFilename,
       pdf_version: result.version,
       file_size_bytes: result.fileSizeBytes,
       selected_document_count: result.documentCount,
-      backup_status: backupResult.status
+      backup_status: backupResult.status,
+      verifier_status: verifierResult.status
     });
     return success_({
       filename: result.filename,
       pdf_version: result.version,
       file_size_bytes: result.fileSizeBytes,
       backup: backupResult,
+      verifier: verifierResult,
       claim: claimDetailForClient_(result.claim)
     });
   } catch (error) {
@@ -160,7 +164,7 @@ function completeClaim(sessionToken, claimId) {
 
 function reopenClaim(sessionToken, claimId) {
   try {
-    var user = requireRole(ROLES.ADMIN, sessionToken);
+    var user = requireAuthenticatedUser(sessionToken);
     var updated = withScriptLock_(function () {
       var claim = requireAccessibleClaim_(user, claimId);
       assert_(normalizeString_(claim.status).toUpperCase() === CLAIM_STATUSES.COMPLETED,
@@ -216,6 +220,9 @@ function buildPdfPreparation_(claim) {
     if (Object.prototype.hasOwnProperty.call(counts, type)) counts[type] += 1;
   });
   var issues = [];
+  if (!normalizeString_(claim.doctor_name)) {
+    issues.push('Lengkapi Nama Dokter pada data klaim.');
+  }
   if (getBooleanSetting_('REQUIRE_USG', true) && counts.USG < 1) {
     issues.push('Pilih sedikitnya satu Gambar USG.');
   }
@@ -292,6 +299,7 @@ function appendPdfCover_(body, claim, pageNumber) {
   appendPdfCoverField_(body, 'Nama Pasien', normalizeString_(claim.patient_name));
   appendPdfCoverField_(body, 'NIK', normalizeString_(claim.patient_nik));
   appendPdfCoverField_(body, 'No. HP', normalizeString_(claim.patient_phone));
+  appendPdfCoverField_(body, 'Nama Dokter', normalizeString_(claim.doctor_name));
   appendPdfCoverField_(body, 'Tanggal Lahir', formatIndonesianServerDate_(claim.patient_birth_date));
   appendPdfCoverField_(body, 'Tanggal Pemeriksaan USG', formatIndonesianServerDate_(claim.examination_date));
   appendPdfCoverField_(body, 'Fasilitas', facilityName);

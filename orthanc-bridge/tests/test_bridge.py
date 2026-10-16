@@ -44,8 +44,13 @@ class MetadataTests(unittest.TestCase):
                 "StudyDate": "20260913",
                 "StudyInstanceUID": "1.2.3.4",
             },
+            "RequestedTags": {
+                "PatientComments": "DR ICA",
+            },
         }, 3)
         self.assertEqual(result["patient_name"], "SARI AMIN")
+        self.assertEqual(result["patient_id"], "7371012345678901")
+        self.assertEqual(result["patient_comments"], "DR ICA")
         self.assertEqual(result["patient_birth_date"], "1990-01-02")
         self.assertEqual(result["study_date"], "2026-09-13")
         self.assertEqual(result["expected_images"], 3)

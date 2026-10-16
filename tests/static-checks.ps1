@@ -19,6 +19,7 @@ foreach ($file in $requiredFiles) {
 
 $allSource = Get-ChildItem -LiteralPath $sourceRoot -File | Get-Content -Raw
 $sourceText = $allSource -join "`n"
+$bridgeSourceText = Get-Content -LiteralPath (Join-Path $projectRoot 'orthanc-bridge\bridge.py') -Raw
 $functionMatches = [regex]::Matches($sourceText, '(?m)^function\s+([A-Za-z0-9_]+)\s*\(')
 $duplicates = $functionMatches | ForEach-Object { $_.Groups[1].Value } | Group-Object | Where-Object Count -gt 1
 foreach ($duplicate in $duplicates) {
@@ -154,7 +155,7 @@ foreach ($requiredPdfFeature in @(
 }
 $pdfSource = Get-Content -LiteralPath (Join-Path $sourceRoot 'PdfService.gs') -Raw
 foreach ($requiredPdfLayoutFeature in @(
-  "APP_VERSION: '6.7.0-supporting-pdf-files'",
+  "APP_VERSION: '6.10.1-verifier-readable-filenames'",
   "['PDF_USG_IMAGES_PER_PAGE', '1'",
   'var PDF_LAYOUT = Object.freeze',
   "body.appendParagraph('KLAIM USG BPJS')",
@@ -266,11 +267,15 @@ foreach ($requiredOrthancFeature in @(
   'function listOrthancInbox',
   'function getOrthancInboxDetail',
   'function getOrthancInboxThumbnail',
+  'function getOrthancInboxPreview',
   'function createClaimFromOrthanc',
   'function rejectOrthancInbox',
   'ORTHANC_PATIENT_CONFIRMATION_REQUIRED',
   "callServer('listOrthancInbox'",
   "callServer('createClaimFromOrthanc'",
+  'function previewOrthancImage',
+  "'getOrthancInboxPreview'",
+  'orthanc-preview-button',
   'data-orthanc-image-id',
   'orthanc-import-message',
   'function showOrthancImportMessage',
@@ -285,6 +290,13 @@ foreach ($requiredOrthancFeature in @(
 }
 foreach ($requiredBackupFeature in @(
   'BACKUP_DRIVE_FOLDER_ID',
+  'VERIFIER_DRIVE_FOLDER_ID',
+  "['ENABLE_VERIFIER_DRIVE_DELIVERY', 'false'",
+  'function deliverClaimPdfToVerifierSafely_',
+  'function validateVerifierDriveConfiguration',
+  'function renameExistingVerifierPdfFiles',
+  'verifier_pdf_file_id',
+  'verifier_pdf_status',
   "['ENABLE_SECONDARY_DRIVE_BACKUP', 'false'",
   'function backupClaimPdfSafely_',
   'function claimPdfFilename_',
@@ -332,7 +344,12 @@ foreach ($requiredMigrationFeature in @(
   'SCHEMA_DUPLICATE_COLUMN',
   'SCHEMA_BLANK_COLUMN_AMBIGUOUS',
   'migratedHeaders: true',
-  'existingIndexes'
+  'existingIndexes',
+  'function repairClaimDoctorSchemaMigration_',
+  'function repairCorruptedClaimDoctorRecord_',
+  'function assertSheetSchemaCurrent_',
+  'SCHEMA_MIGRATION_REQUIRED',
+  'repairedClaimDoctorRows: claimDoctorRepair.repairedRows'
 )) {
   if (-not $sourceText.Contains($requiredMigrationFeature)) {
     $failures.Add("Safe schema migration missing: $requiredMigrationFeature")
@@ -358,7 +375,7 @@ foreach ($requiredClaimFeature in @(
   }
 }
 foreach ($requiredPatientPhoneFeature in @(
-  "'patient_phone', 'patient_birth_date'",
+  "'patient_phone', 'doctor_name', 'patient_birth_date'",
   'function normalizePatientPhone_',
   "patient_phone: values.patient_phone",
   'name="patient_phone" type="tel" required',
@@ -370,6 +387,41 @@ foreach ($requiredPatientPhoneFeature in @(
     $failures.Add("Patient phone flow missing: $requiredPatientPhoneFeature")
   }
 }
+foreach ($requiredDoctorFeature in @(
+  "'patient_phone', 'doctor_name', 'patient_birth_date'",
+  'function normalizeDoctorName_',
+  'doctor_name: values.doctor_name',
+  'name="doctor_name" required',
+  "form.elements.doctor_name.value = detail.doctor_name_candidate || ''",
+  "document.getElementById('claim-detail-doctor').textContent = claim.doctor_name || '-'",
+  "document.getElementById('pdf-confirm-doctor').textContent = state.currentClaim.doctor_name || '-'",
+  "appendPdfCoverField_(body, 'Nama Dokter', normalizeString_(claim.doctor_name));"
+)) {
+  if (-not $sourceText.Contains($requiredDoctorFeature)) {
+    $failures.Add("Claim doctor flow missing: $requiredDoctorFeature")
+  }
+}
+if ($pdfSource -notmatch '(?s)function\s+reopenClaim\s*\([^)]*\).*?requireAuthenticatedUser\(sessionToken\)') {
+  $failures.Add('Reopening a completed claim must allow an authenticated user with claim access.')
+}
+if ($pdfSource -match '(?s)function\s+reopenClaim\s*\([^)]*\).*?requireRole\(ROLES\.ADMIN') {
+  $failures.Add('Reopening a completed claim is still restricted to administrators.')
+}
+if (-not $clientSource.Contains("preparation.status !== 'COMPLETED'")) {
+  $failures.Add('Completed-claim reopen action is not visible to authorized non-admin users.')
+}
+foreach ($requiredClaimEditReopenFeature in @(
+  'CLAIM_STATUSES.PDF_GENERATED,',
+  'CLAIM_STATUSES.COMPLETED',
+  'changes.status = CLAIM_STATUSES.COLLECTING_DOCUMENTS',
+  "reason: 'CLAIM_DATA_EDITED'",
+  "var editable = claim.status !== 'ARCHIVED'",
+  'Menyimpan perubahan akan membuka kembali klaim ini.'
+)) {
+  if (-not $sourceText.Contains($requiredClaimEditReopenFeature)) {
+    $failures.Add("Claim edit/reopen flow missing: $requiredClaimEditReopenFeature")
+  }
+}
 foreach ($requiredIdentityDisplayFeature in @(
   "APP_NAME: 'Sistem Klaim USG BPJS'",
   "APP_DESCRIPTION: 'Pengelolaan klaim USG, dokumen pendukung, dan data DICOM Orthanc secara terintegrasi.'",
@@ -379,10 +431,31 @@ foreach ($requiredIdentityDisplayFeature in @(
   "patient_name: normalizeString_(inbox.patient_name)",
   "patient_id: normalizeString_(inbox.patient_id)",
   "item.patient_name || 'Belum tersedia'",
-  "item.patient_id || 'Belum tersedia'"
+  "summary.push('ID alat: ' + detail.patient_id)"
 )) {
   if (-not $sourceText.Contains($requiredIdentityDisplayFeature)) {
     $failures.Add("Application identity or full patient identifier display missing: $requiredIdentityDisplayFeature")
+  }
+}
+foreach ($requiredBridgeDicomMetadataFeature in @(
+  '"PatientComments"',
+  '"patient_comments": str(tags.get("PatientComments") or "")[:160]'
+)) {
+  if (-not $bridgeSourceText.Contains($requiredBridgeDicomMetadataFeature)) {
+    $failures.Add("OrthancBridge DICOM metadata extraction missing: $requiredBridgeDicomMetadataFeature")
+  }
+}
+foreach ($requiredFlexibleDicomMetadataFeature in @(
+  "'patient_nik_candidate', 'doctor_name_candidate', 'metadata_warning'",
+  'function interpretDicomIdentityFields_',
+  'function dicomNikCandidate_',
+  'function dicomDoctorCandidate_',
+  "item.patient_nik_candidate || 'Belum tersedia'",
+  "item.doctor_name_candidate || 'Belum tersedia'",
+  'NIK 16 digit tidak ditemukan secara unik pada ID atau Comment DICOM'
+)) {
+  if (-not $sourceText.Contains($requiredFlexibleDicomMetadataFeature)) {
+    $failures.Add("Flexible DICOM metadata flow missing: $requiredFlexibleDicomMetadataFeature")
   }
 }
 foreach ($prohibitedMaskedListFeature in @(

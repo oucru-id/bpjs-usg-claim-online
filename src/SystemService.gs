@@ -43,6 +43,12 @@ function runSystemDiagnostics(sessionToken) {
         getSecondaryBackupSubfolder_(BACKUP_FOLDER_NAMES.CLAIMS).getName();
       }
     });
+    check('Folder Drive verifikator', function () {
+      if (verifierDriveDeliveryEnabled_()) {
+        getVerifierDriveRoot_().getName();
+        getVerifierDriveClaimsFolder_().getName();
+      }
+    });
     writeAudit_(user, 'SYSTEM_DIAGNOSTICS_RUN', '', '', {
       passed: results.filter(function (item) { return item.ok; }).length,
       total: results.length
@@ -57,6 +63,7 @@ function runSystemDiagnostics(sessionToken) {
       maxDocumentsPerClaim: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.MAX_DOCUMENTS_PER_CLAIM),
       maxPdfSizeMb: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.MAX_PDF_SIZE_MB),
       secondaryBackupEnabled: secondaryBackupEnabled_(),
+      verifierDriveDeliveryEnabled: verifierDriveDeliveryEnabled_(),
       currentUser: user.google_email,
       checks: results
     });

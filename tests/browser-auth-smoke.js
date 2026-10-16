@@ -16,10 +16,10 @@ window.google = { script: {} };
   function bootstrap(mustChangePassword) {
     return {
       appVersion: 'browser-test', authMode: 'USERNAME_PASSWORD', mustChangePassword: mustChangePassword,
-      features: { mobile_qr_upload: false, orthanc_bridge: false },
+      features: { mobile_qr_upload: false, orthanc_bridge: true },
       user: { user_id: 'USER-1', google_email: 'staff@example.test', full_name: 'Staff Test',
         role: 'STAFF', facility_id: 'FAC-1', facility_name: 'Puskesmas Test',
-        can_create_claim: false, can_view_all_claims: false, can_generate_pdf: false,
+        can_create_claim: true, can_view_all_claims: false, can_generate_pdf: false,
         can_download_pdf: false, can_manage_users: false }
     };
   }
@@ -33,6 +33,24 @@ window.google = { script: {} };
         if (property === 'loginWithPassword') response = { success: true, data: { sessionToken: 'temporary-token', bootstrap: bootstrap(true) } };
         if (property === 'changeOwnPassword') response = { success: true, data: { sessionToken: 'regular-token', bootstrap: bootstrap(false) } };
         if (property === 'createClaimFromOrthanc') response = { success: false, code: 'TEST_REJECTION', message: 'Server menolak klaim.' };
+        if (property === 'listOrthancInbox') response = { success: true, data: [{
+          inbox_id: 'INBOX-1', updated_at: '2026-10-10T10:00:00Z', patient_name: '',
+          patient_nik_candidate: '', doctor_name_candidate: '', study_date: '2026-10-06',
+          received_images: 1, skipped_images: 0, status: 'READY'
+        }] };
+        if (property === 'listClaimFacilities') response = { success: true, data: [
+          { facility_id: 'FAC-1', facility_name: 'Puskesmas Test' }
+        ] };
+        if (property === 'getOrthancInboxDetail') response = { success: true, data: {
+          inbox_id: 'INBOX-1', patient_name: '', patient_id: '', patient_comments: '',
+          patient_nik_candidate: '', doctor_name_candidate: 'dr. Test', metadata_warning: '',
+          patient_birth_date: '', study_date: '2026-10-06', received_dicoms: 1,
+          expected_dicoms: 1, skipped_images: 0, skipped_dicoms: 0,
+          images: [{ image_id: '11111111-1111-4111-8111-111111111111', image_width: 1024, image_height: 768, imported: false }]
+        } };
+        if (property === 'getOrthancInboxThumbnail' || property === 'getOrthancInboxPreview') response = {
+          success: true, data: { mime_type: 'image/jpeg', base64: '/9j/2Q==' }
+        };
         if (response && state.success) window.setTimeout(function () { state.success(response); }, 0);
       };
     }});
@@ -72,38 +90,72 @@ const browserAssertions = `<script>
               if (window.__authCalls.indexOf('getAppBootstrap') >= 0) throw new Error('redundant bootstrap call detected');
               var claimPhone = document.querySelector('#claim-form [name="patient_phone"]');
               var orthancPhone = document.querySelector('#orthanc-import-form [name="patient_phone"]');
+              var claimDoctor = document.querySelector('#claim-form [name="doctor_name"]');
+              var orthancDoctor = document.querySelector('#orthanc-import-form [name="doctor_name"]');
               if (!claimPhone || claimPhone.type !== 'tel' || !claimPhone.required) throw new Error('claim No. HP field is not usable');
               if (!orthancPhone || orthancPhone.type !== 'tel' || !orthancPhone.required) throw new Error('Orthanc No. HP field is not usable');
+              if (!claimDoctor || !claimDoctor.required) throw new Error('claim doctor field is not usable');
+              if (!orthancDoctor || !orthancDoctor.required) throw new Error('Orthanc doctor field is not usable');
+              var orthancHeaders = Array.from(document.querySelectorAll('.orthanc-table th')).map(function (cell) { return cell.textContent; });
+              if (orthancHeaders.indexOf('NIK terdeteksi') < 0 || orthancHeaders.indexOf('Dokter terdeteksi') < 0) throw new Error('flexible DICOM metadata columns are missing');
+              var orthancNikHelp = document.querySelector('#orthanc-import-form [name="patient_nik"] + .muted');
+              if (!orthancNikHelp || orthancNikHelp.textContent.indexOf('ID atau Comment DICOM') < 0) throw new Error('flexible NIK source guidance is missing');
               if (!document.getElementById('claim-detail-phone') || !document.getElementById('pdf-confirm-phone')) throw new Error('No. HP display fields are missing');
-              document.getElementById('orthanc-import-dialog').showModal();
-              var orthancForm = document.getElementById('orthanc-import-form');
-              orthancForm.elements.patient_name.value = 'Pasien Test';
-              orthancForm.elements.patient_nik.value = '1234567890123456';
-              orthancForm.elements.patient_phone.value = '081234567890';
-              orthancForm.elements.patient_birth_date.value = '2026-10-02';
-              orthancForm.elements.examination_date.value = '2026-09-16';
-              orthancForm.elements.facility_id.innerHTML = '<option value="FAC-1" selected>Fasilitas Test</option>';
-              orthancForm.elements.confirmed_patient.checked = true;
-              orthancForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-              var orthancMessage = document.getElementById('orthanc-import-message');
-              if (orthancMessage.classList.contains('hidden')) throw new Error('Orthanc validation message hidden');
-              if (orthancMessage.textContent !== 'Tanggal lahir tidak boleh setelah tanggal pemeriksaan USG.') throw new Error('wrong Orthanc date message');
-              if (window.__authCalls.indexOf('createClaimFromOrthanc') >= 0) throw new Error('invalid Orthanc dates reached server');
-              var selectedImage = document.createElement('input');
-              selectedImage.type = 'checkbox';
-              selectedImage.checked = true;
-              selectedImage.dataset.orthancImageId = 'IMAGE-1';
-              document.body.appendChild(selectedImage);
-              orthancForm.elements.patient_birth_date.value = '1996-10-02';
-              orthancForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-              if (orthancMessage.textContent !== 'Sedang membuat klaim serta menyalin gambar USG dan DICOM asli. Mohon tunggu...') throw new Error('Orthanc progress message missing');
+              if (!document.getElementById('claim-detail-doctor') || !document.getElementById('pdf-confirm-doctor')) throw new Error('doctor display fields are missing');
+              document.getElementById('orthanc-nav-button').click();
               window.setTimeout(function () {
                 try {
-                  if (orthancMessage.textContent !== 'Server menolak klaim.') throw new Error('server error not shown in Orthanc dialog');
-                  var importButton = document.getElementById('import-orthanc-button');
-                  if (importButton.disabled) throw new Error('Orthanc import button stayed disabled');
-                  if (importButton.textContent !== 'Buat Klaim dari Orthanc') throw new Error('Orthanc import button label not restored');
-                  result.textContent = 'PASS';
+                  var reviewButton = Array.from(document.querySelectorAll('#orthanc-inbox-body button')).find(function (button) { return button.textContent === 'Tinjau'; });
+                  if (!reviewButton) throw new Error('Orthanc review action was not rendered');
+                  reviewButton.click();
+                  window.setTimeout(function () {
+                    try {
+                      var orthancForm = document.getElementById('orthanc-import-form');
+                      if (!document.getElementById('orthanc-import-dialog').open) throw new Error('Orthanc review dialog did not open');
+                      if (orthancForm.elements.doctor_name.value !== 'dr. Test') throw new Error('Orthanc doctor candidate was not prefilled');
+                      orthancForm.elements.patient_name.value = 'Pasien Test';
+                      orthancForm.elements.patient_nik.value = '1234567890123456';
+                      orthancForm.elements.patient_phone.value = '081234567890';
+                      orthancForm.elements.patient_birth_date.value = '2026-10-02';
+                      orthancForm.elements.examination_date.value = '2026-09-16';
+                      orthancForm.elements.confirmed_patient.checked = true;
+                      orthancForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+                      var orthancMessage = document.getElementById('orthanc-import-message');
+                      if (orthancMessage.classList.contains('hidden')) throw new Error('Orthanc validation message hidden');
+                      if (orthancMessage.textContent !== 'Tanggal lahir tidak boleh setelah tanggal pemeriksaan USG.') throw new Error('wrong Orthanc date message');
+                      if (window.__authCalls.indexOf('createClaimFromOrthanc') >= 0) throw new Error('invalid Orthanc dates reached server');
+                      orthancForm.elements.patient_birth_date.value = '1996-10-02';
+                      orthancForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+                      if (orthancMessage.textContent !== 'Sedang membuat klaim serta menyalin gambar USG dan DICOM asli. Mohon tunggu...') throw new Error('Orthanc progress message missing');
+                      window.setTimeout(function () {
+                        try {
+                          if (orthancMessage.textContent !== 'Server menolak klaim.') throw new Error('server error not shown in Orthanc dialog');
+                          var importButton = document.getElementById('import-orthanc-button');
+                          if (importButton.disabled) throw new Error('Orthanc import button stayed disabled');
+                          if (importButton.textContent !== 'Buat Klaim dari Orthanc') throw new Error('Orthanc import button label not restored');
+                          var previewButton = document.querySelector('.orthanc-preview-button');
+                          var orthancCheckbox = document.querySelector('#orthanc-image-grid [data-orthanc-image-id]');
+                          if (!previewButton || previewButton.type !== 'button') throw new Error('Orthanc preview button is missing');
+                          if (!orthancCheckbox || !orthancCheckbox.checked) throw new Error('Orthanc image selection did not initialize');
+                          previewButton.click();
+                          if (!orthancCheckbox.checked) throw new Error('opening preview changed Orthanc image selection');
+                          window.setTimeout(function () {
+                            try {
+                              var previewDialog = document.getElementById('preview-dialog');
+                              var previewImage = document.getElementById('preview-image');
+                              if (!previewDialog.open) throw new Error('Orthanc full-image preview did not open');
+                              if (document.getElementById('preview-title').textContent !== 'Gambar USG 1') throw new Error('Orthanc preview title is wrong');
+                              if (!previewImage.src.startsWith('data:image/jpeg;base64,')) throw new Error('Orthanc full-image preview was not loaded');
+                              if (window.__authCalls.indexOf('getOrthancInboxPreview') < 0) throw new Error('Orthanc full-image endpoint was not called');
+                              document.getElementById('close-preview-dialog').click();
+                              if (previewDialog.open) throw new Error('Orthanc full-image preview did not close');
+                              result.textContent = 'PASS';
+                            } catch (error) { fail(error); }
+                          }, 50);
+                        } catch (error) { fail(error); }
+                      }, 50);
+                    } catch (error) { fail(error); }
+                  }, 50);
                 } catch (error) { fail(error); }
               }, 50);
             } catch (error) { fail(error); }

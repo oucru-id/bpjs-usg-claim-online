@@ -46,7 +46,8 @@ const claim = {
   facility_id: 'FAC-1',
   examination_date: '2026-10-02',
   patient_nik: '7371012345678901',
-  patient_phone: '081234567890'
+  patient_phone: '081234567890',
+  doctor_name: 'dr. Rahasia'
 };
 
 assert.strictEqual(
@@ -77,6 +78,7 @@ assert.match(rawStorage, /^DICOM_RAW_F1[A-Za-z0-9_-]{22}\.dcm$/);
 [pdfStorage, pdfBackupStorage, dicomStorage, rawStorage].forEach((filename) => {
   assert.ok(!filename.includes(claim.patient_nik));
   assert.ok(!filename.includes(claim.patient_phone));
+  assert.ok(!filename.includes(claim.doctor_name));
   assert.ok(!filename.includes('Puskesmas'));
 });
 assert.strictEqual(sandbox.BACKUP_FOLDER_NAMES.RAW_DICOM, 'DICOM RAW');
@@ -150,7 +152,10 @@ sandbox.readAllRecords_ = (sheet) => {
     claim_id: claim.claim_id,
     final_pdf_storage_filename: pdfStorage,
     final_pdf_url: 'primary-pdf-url',
-    final_pdf_filename: sandbox.claimPdfFilename_(claim, 3)
+    final_pdf_filename: sandbox.claimPdfFilename_(claim, 3),
+    verifier_pdf_storage_filename: pdfStorage,
+    verifier_pdf_url: 'verifier-pdf-url',
+    verifier_pdf_filename: sandbox.claimPdfFilename_(claim, 3)
   }];
   if (sheet === 'ORTHANC_DICOMS') return [{
     ...dicom,
@@ -164,6 +169,10 @@ sandbox.readAllRecords_ = (sheet) => {
 assert.strictEqual(
   sandbox.reconstructFilenameFromDatabase_(pdfStorage).original_filename,
   sandbox.claimPdfFilename_(claim, 3)
+);
+assert.strictEqual(
+  sandbox.reconstructFilenameFromDatabase_('verifier-pdf-url').location,
+  'VERIFIER_PDF'
 );
 assert.strictEqual(
   sandbox.reconstructFilenameFromDatabase_('primary-dicom-url').original_filename,

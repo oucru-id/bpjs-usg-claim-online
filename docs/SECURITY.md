@@ -40,12 +40,15 @@ The web app executes as the deploying administrator. Staff are not granted direc
 
 PDF generation uses a temporary private Google Doc owned by the deploying administrator. The application converts it to PDF, stores the versioned output in the claim's private `OUTPUT` folder, and moves the temporary Google Doc to trash in a `finally` cleanup path. Preview and download return authorized content through the application and never expose a Drive sharing URL.
 
+When verifier delivery is enabled, every newly generated PDF is also copied to a dedicated private folder owned by the approved verifier account. Only that folder is shared as Editor with the deployment account. By operational request, verifier filenames are readable and contain Puskesmas, examination date, NIK, and phone number; primary and backup Drive filenames remain anonymous. Verifier URLs remain only in the private database, and a delivery failure does not remove the primary PDF. Both the filename and PDF body therefore contain identifiable patient data, so the verifier account and retention process must remain inside the approved health-data boundary.
+
 ## Claim privacy and authorization
 
 - Every claim list/detail/create/update/status/archive endpoint authenticates on the server.
 - Staff access is restricted by facility unless an administrator explicitly grants **Lihat semua klaim**.
-- The claim list remains access-filtered by role and facility and displays complete patient names, NIK, and No. HP values to authenticated users who can access those claims. The Orthanc inbox displays the complete patient name and DICOM PatientID only to users with claim-creation permission.
-- Claim codes and Drive folder names never contain patient names, NIK, No. HP, or birth dates.
+- The claim list remains access-filtered by role and facility and displays complete patient names, NIK, No. HP, and doctor names to authenticated users who can access those claims. The Orthanc inbox displays the complete patient name, raw DICOM PatientID/PatientComments, detected NIK, and detected doctor name only to users with claim-creation permission.
+- Reopening or editing a completed claim requires an authenticated session and normal claim access; this allows staff within their facility/access scope without granting broader claim visibility. A data edit returns the claim to Collecting Documents and requires a new PDF version. Archiving remains administrator-only.
+- Claim codes and Drive folder names never contain patient names, NIK, No. HP, doctor names, or birth dates.
 - Claims are archived rather than permanently deleted.
 - Audit details contain claim codes/statuses, not full patient payloads.
 
@@ -72,8 +75,8 @@ PDF generation uses a temporary private Google Doc owned by the deploying admini
 - Administrator membuat kunci acak 96 karakter. Apps Script hanya menyimpan hash SHA-256 kunci; nilai asli ditampilkan satu kali untuk disimpan pada `config.json` di PC Orthanc.
 - ID bridge dan kunci diperiksa menggunakan pembandingan waktu-konstan sebelum metadata atau gambar diproses.
 - Bridge mengirim gambar satu per satu. Server memeriksa jenis JPEG, tanda tangan byte, ukuran, dimensi, dan identitas studi sebelum menyimpannya pada folder penampungan privat.
-- Nama pasien, NIK, No. HP, dan gambar tidak ditulis ke log bridge atau detail audit.
-- Daftar kotak masuk menyamarkan identitas. Data lengkap dan thumbnail hanya diberikan setelah sesi aplikasi mempunyai izin membuat klaim.
+- Nama pasien, NIK, No. HP, Nama Dokter, dan gambar tidak ditulis ke log bridge atau detail audit.
+- Daftar kotak masuk menyamarkan identitas. Data lengkap, thumbnail, dan pratinjau gambar ukuran penuh hanya diberikan melalui aplikasi setelah sesi mempunyai izin membuat klaim; URL Drive tidak dibagikan.
 - Klaim tidak dibuat otomatis. Petugas wajib memeriksa data pasien, memilih gambar, dan mencentang konfirmasi pasien.
 - `StudyInstanceUID`, ID study/series/instance Orthanc, serta indeks frame disimpan untuk mencegah impor berulang dan menjaga ketertelusuran.
 - Menonaktifkan bridge menghentikan permintaan baru tanpa menghapus data yang sudah diterima. Mengganti kunci langsung membatalkan kunci lama.

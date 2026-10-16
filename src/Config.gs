@@ -1,7 +1,7 @@
 var APP_CONFIG = Object.freeze({
   APP_NAME: 'Sistem Klaim USG BPJS',
   APP_DESCRIPTION: 'Pengelolaan klaim USG, dokumen pendukung, dan data DICOM Orthanc secara terintegrasi.',
-  APP_VERSION: '6.7.0-supporting-pdf-files',
+  APP_VERSION: '6.10.1-verifier-readable-filenames',
   AUTH_MODE: 'USERNAME_PASSWORD',
   TIMEZONE: 'Asia/Makassar',
   DATABASE_NAME: 'BPJS_USG_APP_DATABASE',
@@ -21,6 +21,7 @@ var SCRIPT_PROPERTY_KEYS = Object.freeze({
   ORTHANC_BRIDGE_ID: 'ORTHANC_BRIDGE_ID',
   ORTHANC_BRIDGE_SECRET_HASH: 'ORTHANC_BRIDGE_SECRET_HASH',
   BACKUP_DRIVE_FOLDER_ID: 'BACKUP_DRIVE_FOLDER_ID',
+  VERIFIER_DRIVE_FOLDER_ID: 'VERIFIER_DRIVE_FOLDER_ID',
   ADMIN_EMAIL: 'ADMIN_EMAIL',
   WORKSPACE_DOMAIN: 'WORKSPACE_DOMAIN',
   APP_NAME: 'APP_NAME',
@@ -50,7 +51,7 @@ var SHEET_SCHEMAS = Object.freeze({
   FACILITIES: ['facility_id', 'facility_name', 'active', 'created_at'],
   CLAIMS: [
     'claim_id', 'claim_code', 'facility_id', 'patient_name', 'patient_nik',
-    'patient_phone', 'patient_birth_date', 'examination_date', 'status', 'created_by',
+    'patient_phone', 'doctor_name', 'patient_birth_date', 'examination_date', 'status', 'created_by',
     'created_at', 'updated_by', 'updated_at', 'mobile_upload_token_hash',
     'mobile_upload_token_expires_at', 'mobile_upload_token_revoked_at',
     'drive_claim_folder_id', 'selected_document_count', 'pdf_version',
@@ -59,6 +60,9 @@ var SHEET_SCHEMAS = Object.freeze({
     'final_pdf_generated_by', 'backup_pdf_file_id', 'backup_pdf_filename',
     'backup_pdf_storage_filename', 'backup_pdf_url',
     'backup_pdf_at', 'backup_pdf_status', 'backup_pdf_error',
+    'verifier_pdf_file_id', 'verifier_pdf_filename',
+    'verifier_pdf_storage_filename', 'verifier_pdf_url',
+    'verifier_pdf_at', 'verifier_pdf_status', 'verifier_pdf_error',
     'completed_at', 'archived_at'
   ],
   DOCUMENTS: [
@@ -86,8 +90,9 @@ var SHEET_SCHEMAS = Object.freeze({
   ],
   ORTHANC_INBOX: [
     'inbox_id', 'bridge_id', 'source_key', 'orthanc_study_id',
-    'study_instance_uid', 'patient_name', 'patient_id',
-    'patient_nik_candidate', 'patient_birth_date', 'study_date',
+    'study_instance_uid', 'patient_name', 'patient_id', 'patient_comments',
+    'patient_nik_candidate', 'doctor_name_candidate', 'metadata_warning',
+    'patient_birth_date', 'study_date',
     'accession_number', 'study_description', 'status', 'expected_images',
     'received_images', 'skipped_images', 'expected_dicoms', 'received_dicoms',
     'skipped_dicoms', 'bridge_message', 'claim_id',
@@ -125,6 +130,7 @@ var DEFAULT_SETTINGS = Object.freeze([
   ['ENABLE_MOBILE_QR_UPLOAD', 'false', 'Aktifkan alur unggah ponsel menggunakan QR dan token'],
   ['ENABLE_ORTHANC_BRIDGE', 'false', 'Aktifkan penerimaan pemeriksaan dari OrthancBridge lokal'],
   ['ENABLE_SECONDARY_DRIVE_BACKUP', 'false', 'Salin seluruh DICOM raw, DICOM terkait klaim, dan PDF klaim ke folder Drive cadangan'],
+  ['ENABLE_VERIFIER_DRIVE_DELIVERY', 'false', 'Kirim setiap PDF klaim yang baru dibuat ke folder Drive privat milik verifikator'],
   ['REQUIRE_USG', 'true', 'Wajib sedikitnya satu gambar USG terpilih'],
   ['REQUIRE_KTP', 'false', 'Wajib KTP sebelum PDF'],
   ['REQUIRE_BUKU_KIA', 'false', 'Wajib Buku KIA sebelum PDF'],

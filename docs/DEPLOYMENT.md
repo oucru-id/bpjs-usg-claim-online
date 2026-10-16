@@ -47,9 +47,11 @@ Version 6.1 adds raw-backup status columns to `ORTHANC_DICOMS` and copies every 
 
 Version 6.3 adds `patient_phone` to `CLAIMS`. Existing claim rows are preserved and receive an empty value; enter a No. HP before editing and saving an older claim.
 
-Version 6.5 adds anonymous deterministic `F1` storage filenames plus private logical-name and Drive-URL mappings. Version 6.7 adds PDF/JPEG/PNG supporting-file selection and converts each PDF page to JPEG in the browser. The current release does not use Cloud KMS/E1, `FILENAME_KMS_KEY_NAME`, `FilenameCryptoService.gs`, or the `cloud-platform` OAuth scope.
+Version 6.5 adds anonymous deterministic `F1` storage filenames plus private logical-name and Drive-URL mappings. Version 6.7 adds PDF/JPEG/PNG supporting-file selection and converts each PDF page to JPEG in the browser. Version 6.8 reads both DICOM `PatientID` and `PatientComments`, detects a unique 16-digit NIK and doctor-name candidate, and warns instead of guessing when values conflict. Version 6.9 adds `doctor_name` to `CLAIMS` and allows any authenticated user with access to a completed claim to reopen it. Version 6.9.1 also allows data edits on every non-archived claim; editing a Ready/PDF-generated/Completed claim automatically returns it to Collecting Documents so the PDF must be regenerated. Version 6.9.2 detects and repairs claim rows whose doctor/date/status values were shifted because the new source wrote before the `CLAIMS` schema migration, and blocks subsequent writes when a sheet schema is stale. Existing unaffected claim rows are preserved and receive an empty doctor name; fill it before creating a new PDF for an older claim. The current release does not use Cloud KMS/E1, `FILENAME_KMS_KEY_NAME`, `FilenameCryptoService.gs`, or the `cloud-platform` OAuth scope.
 
-After a successful migration, the application header should display `6.7.0-supporting-pdf-files`.
+Version 6.10 adds automatic delivery of each newly generated PDF version to a separate private verifier Drive folder, with status metadata in `CLAIMS` and no verifier URL exposed to staff. Version 6.10.1 changes only the verifier copy to a readable logical filename; primary and backup copies remain anonymous.
+
+After a successful migration, the application header should display `6.10.1-verifier-readable-filenames`. The setup result includes `repairedClaimDoctorRows`; if it is greater than zero, review those repaired claims before resuming normal work.
 
 After deployment, log in as administrator, open **Sistem**, and run **Jalankan Diagnostik**. The server-side self-test function requires an application session token and is not intended to be run directly from the Apps Script editor.
 
@@ -111,13 +113,13 @@ Any password reset performed from **Pengguna** is temporary and forces the user 
 
 ## 7. Test claim management
 
-Use clearly fictitious data only, for example `Pasien Demo`, NIK `0000000000000000`, and No. HP `081234567890`.
+Use clearly fictitious data only, for example `Pasien Demo`, NIK `0000000000000000`, No. HP `081234567890`, and doctor `dr. Demo`.
 
 1. Log in as STAFF and confirm all interface labels are in Bahasa Indonesia.
-2. Click **+ Buat Klaim Baru**, enter the demo patient data, and save.
-3. Confirm the generated code follows `CLAIM-YYYYMMDD-XXXXXX` and contains no patient name, NIK, or No. HP.
-4. Confirm the list displays the complete patient name, NIK, and normalized No. HP for an authorized user.
-5. Open the claim and confirm the authorized detail displays the complete 16-digit NIK and No. HP.
+2. Click **+ Buat Klaim Baru**, enter the demo patient data and **Nama Dokter**, and save.
+3. Confirm the generated code follows `CLAIM-YYYYMMDD-XXXXXX` and contains no patient name, NIK, No. HP, or doctor name.
+4. Confirm the list displays the complete patient name, NIK, normalized No. HP, and doctor name for an authorized user.
+5. Open the claim and confirm the authorized detail displays the complete 16-digit NIK, No. HP, and doctor name.
 6. Edit it and select **Mulai Pengumpulan Berkas**.
 7. Confirm a private folder named only with the claim code exists below the configured `CLAIMS` folder and contains the standard subfolders.
 8. With a staff account from another facility, confirm the claim is not visible unless **Lihat semua klaim** was explicitly granted.
@@ -154,11 +156,11 @@ Continue using only fictitious documents.
 4. Confirm **Buat PDF** remains unavailable until at least one Gambar USG is selected.
 5. Click **Buat PDF**, verify the mandatory same-patient confirmation, then create the PDF.
 6. Confirm the Drive filename follows `KLAIM_F1<KODE>_v001.pdf`, the file exists only in the private `OUTPUT` folder, and downloading through the app restores `KLAIM_<Puskesmas>_<YYYYMMDD>_<NIK>_<NO_HP>_v001.pdf`.
-7. Confirm the PDF cover displays the complete 16-digit NIK and No. HP.
+7. Confirm the PDF cover displays the complete 16-digit NIK, No. HP, and doctor name.
 8. Use **Pratinjau PDF** and **Unduh PDF** from the web app. Confirm the staff account still cannot open the Drive file directly.
 9. Create the PDF again and confirm version `v002` is created without overwriting `v001`.
 10. Click **Selesaikan Klaim** and confirm upload, rotation, selection, ordering, and deletion are locked.
-11. As ADMIN, click **Buka Kembali Klaim**, change one document, regenerate the PDF, and complete the claim again.
+11. While still logged in as STAFF with access to the claim, click **Buka Kembali Klaim**, change one document, regenerate the PDF, and complete the claim again. Confirm a staff user outside the claim's access boundary still cannot open or reopen it.
 12. Review `AUDIT_LOG` for `DOCUMENT_SELECTION_UPDATED`, `DOCUMENT_ROTATED`, `DOCUMENTS_REORDERED`, `PDF_GENERATED`, `PDF_PREVIEWED`, `PDF_DOWNLOADED`, `CLAIM_COMPLETED`, and `CLAIM_REOPENED`.
 
 If Google Docs conversion fails or requests authorization, sign in as the deploying administrator, approve the Google Documents scope, then retry. Do not grant staff direct access to the temporary document or output PDF.
@@ -172,13 +174,14 @@ Follow [ORTHANC_BRIDGE.md](ORTHANC_BRIDGE.md) using fictitious DICOM data.
 1. Create the bridge key from **Sistem** and confirm the **Orthanc** navigation is visible after the bridge is enabled.
 2. Run `orthanc-bridge/run-once.ps1` on the Orthanc PC.
 3. Confirm the examination appears as **Siap ditinjau** and that the claim has not yet been created.
-4. Confirm a non-16-digit `PatientID` does not automatically populate NIK.
-5. Review all metadata, enter the No. HP manually, and select at least one image.
-6. Confirm the patient and create the claim.
-7. Confirm the claim opens as **Mengumpulkan berkas**, the selected USG images appear, and `DOCUMENTS.source_type` is `ORTHANC_IMPORT`.
-8. Confirm each original `.dcm` instance exists in the claim's private `DICOM` folder and the Orthanc Study, Series, Instance, and frame identifiers are stored without appearing in public URLs.
-9. Run the bridge again and confirm the same study is not duplicated.
-10. Review `AUDIT_LOG` for `ORTHANC_STUDY_RECEIVED` and `ORTHANC_CLAIM_IMPORTED`.
+4. Test NIK in `PatientID`, NIK in `PatientComments`, both fields empty, and conflicting 16-digit values. Confirm only one unique NIK is populated automatically.
+5. Confirm the detected doctor name is shown when it is entered in either field and conflicting doctor names generate a warning.
+6. Review all metadata, enter the No. HP manually, confirm or correct **Nama Dokter**, and select at least one image.
+7. Confirm the patient and create the claim.
+8. Confirm the claim opens as **Mengumpulkan berkas**, the selected USG images appear, and `DOCUMENTS.source_type` is `ORTHANC_IMPORT`.
+9. Confirm each original `.dcm` instance exists in the claim's private `DICOM` folder and the Orthanc Study, Series, Instance, and frame identifiers are stored without appearing in public URLs.
+10. Run the bridge again and confirm the same study is not duplicated.
+11. Review `AUDIT_LOG` for `ORTHANC_STUDY_RECEIVED` and `ORTHANC_CLAIM_IMPORTED`.
 
 Do not begin continuous synchronization until the one-time test has passed on the real Orthanc PC. Local automated tests do not prove connectivity to the clinic's Orthanc, Apps Script deployment, or DICOM codec compatibility.
 
@@ -202,6 +205,21 @@ Do not begin continuous synchronization until the one-time test has passed on th
 `F1` is one-way and cannot be decrypted. Preserve the private Spreadsheet mapping (`*_filename`, `*_storage_filename`, file ID, and Drive URL columns) together with the Drive data for recovery.
 
 Do not paste the second account's password or credential JSON into Apps Script, `config.json`, chat, or Git. Folder-level sharing is sufficient for this design.
+
+## 12. Configure and test the verifier Drive account
+
+1. In the approved verifier account, create a private folder such as `BPJS_USG_VERIFIKATOR`.
+2. Share only that folder as **Editor** with the Google account that owns/deploys the Apps Script web app. Do not enable link sharing and do not share the whole verifier Drive.
+3. Copy the folder ID from its Drive URL and add it in **Project Settings -> Script Properties** as `VERIFIER_DRIVE_FOLDER_ID`. The folder must be different from `ROOT_DRIVE_FOLDER_ID` and `BACKUP_DRIVE_FOLDER_ID`.
+4. Synchronize/deploy this source, then run `setupApplication()` once so the new `CLAIMS` columns and `ENABLE_VERIFIER_DRIVE_DELIVERY` setting exist.
+5. Run `validateVerifierDriveConfiguration()` directly from the Apps Script editor. It validates write access, creates the private `KLAIM` subfolder if needed, removes its temporary probe file, and enables delivery.
+6. Generate a PDF for a fictitious claim. Confirm the application reports **PDF berhasil dikirim ke Drive verifikator** and the verifier `KLAIM` folder contains `KLAIM_<Puskesmas>_<YYYYMMDD>_<NIK>_<NO_HP>_v001.pdf`.
+7. Regenerate the PDF and confirm `v002` is added while `v001` remains available as verification history.
+8. In the private `CLAIMS` sheet, confirm `verifier_pdf_file_id`, logical/storage filenames, URL, timestamp, and `verifier_pdf_status=READY` are populated for the latest version. Do not expose the URL in the staff UI.
+9. Run **Sistem -> Jalankan Diagnostik** and confirm `Folder Drive verifikator` is `OK`.
+10. Test a controlled failure by temporarily removing Editor access, generate a fictitious PDF, and confirm the primary PDF remains available while the UI reports the verifier delivery failure. Restore Editor access and repeat with a new PDF version.
+
+This feature sends PDFs generated after it is enabled. To rename the latest already-tracked verifier PDF for each claim from `F1` to its readable name, run `renameExistingVerifierPdfFiles()` directly as `ADMIN_EMAIL`; it processes at most 100 claims per run and may be run repeatedly. The readable verifier filename and PDF body contain patient data, so the verifier folder must follow the approved clinical-data access and retention policy.
 
 ## Removing the unused Google OAuth configuration
 

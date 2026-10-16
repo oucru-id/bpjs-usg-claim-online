@@ -377,6 +377,10 @@ function reconstructFilenameFromDatabase_(storageNameOrUrl) {
       {
         location: 'BACKUP_PDF', storage: claim.backup_pdf_storage_filename,
         url: claim.backup_pdf_url, original: claim.backup_pdf_filename
+      },
+      {
+        location: 'VERIFIER_PDF', storage: claim.verifier_pdf_storage_filename,
+        url: claim.verifier_pdf_url, original: claim.verifier_pdf_filename
       }
     ];
     return mappings.some(function (mapping) {

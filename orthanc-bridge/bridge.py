@@ -114,7 +114,7 @@ class OrthancClient:
             "Query": {"StudyDate": start_date.strftime("%Y%m%d") + "-"},
             "Expand": True,
             "RequestedTags": [
-                "PatientName", "PatientID", "PatientBirthDate", "StudyDate",
+                "PatientName", "PatientID", "PatientComments", "PatientBirthDate", "StudyDate",
                 "StudyInstanceUID", "AccessionNumber", "StudyDescription",
             ],
         }
@@ -301,6 +301,7 @@ def study_payload(study: dict[str, Any], expected_images: int, expected_dicoms: 
         "study_instance_uid": str(tags.get("StudyInstanceUID") or ""),
         "patient_name": clean_patient_name(tags.get("PatientName")),
         "patient_id": str(tags.get("PatientID") or "")[:80],
+        "patient_comments": str(tags.get("PatientComments") or "")[:160],
         "patient_birth_date": dicom_date(tags.get("PatientBirthDate")),
         "study_date": dicom_date(tags.get("StudyDate")),
         "accession_number": str(tags.get("AccessionNumber") or "")[:80],

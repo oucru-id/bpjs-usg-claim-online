@@ -1,8 +1,8 @@
 # Panduan Implementasi Sistem Klaim USG BPJS
 
-## Puskesmas dengan PC dan Akun Google Sendiri, Terhubung ke Akun Backup
+## Puskesmas dengan PC dan Akun Google Sendiri, Terhubung ke Akun Backup dan Verifikator
 
-**Versi aplikasi acuan:** `6.7.0-supporting-pdf-files`
+**Versi aplikasi acuan:** `6.10.1-verifier-readable-filenames`
 
 **Tanggal dokumen:** 3 Oktober 2026
 **Sasaran:** administrator TI, penanggung jawab program, dan petugas Puskesmas
@@ -18,7 +18,8 @@ Dokumen ini menjelaskan pemasangan satu ekosistem Sistem Klaim USG BPJS pada Pus
 3. Alat USG mengirim DICOM ke Orthanc pada PC Puskesmas melalui jaringan lokal.
 4. OrthancBridge mengirim data keluar melalui HTTPS ke Apps Script; Orthanc tidak dibuka ke internet.
 5. Akun Google backup yang terpisah menyimpan salinan DICOM dan PDF klaim pada folder privat.
-6. Petugas tetap harus memeriksa identitas pasien sebelum pemeriksaan Orthanc dibuat menjadi klaim.
+6. Akun Google verifikator yang terpisah menerima setiap versi PDF yang baru dibuat pada folder privat.
+7. Petugas tetap harus memeriksa identitas pasien sebelum pemeriksaan Orthanc dibuat menjadi klaim.
 
 Panduan ini adalah prosedur instalasi baru. Jangan menyalin rahasia, password pepper, kunci bridge, sesi, atau berkas konfigurasi privat dari Puskesmas lain.
 
@@ -49,6 +50,10 @@ Akun Google backup
        |- DICOM RAW
        |- DICOM
        `- KLAIM
+
+Akun Google verifikator
+  `- Folder privat BPJS_USG_VERIFIKATOR
+       `- KLAIM (PDF per versi)
 ```
 
 PC lain dan ponsel petugas tidak perlu memasang Orthanc. Perangkat tersebut cukup membuka URL produksi `/exec` melalui browser dan masuk memakai username/password aplikasi.
@@ -59,6 +64,7 @@ PC lain dan ponsel petugas tidak perlu memasang Orthanc. Perangkat tersebut cuku
 |---|---|---|
 | Akun Google operasional | Puskesmas | Membuat Apps Script, deployment, database, dan Drive utama |
 | Akun Google backup | Institusi/penanggung jawab backup | Memiliki folder backup privat |
+| Akun Google verifikator | Verifikator klaim yang berwenang | Memiliki folder penerimaan PDF privat |
 | Akun aplikasi ADMIN | Administrator Puskesmas | Mengelola pengguna, diagnostik, dan OrthancBridge |
 | Akun aplikasi STAFF | Petugas berwenang | Mengelola klaim dan dokumen sesuai izin |
 | Akun Windows bridge | PC Orthanc | Menjalankan Scheduled Task OrthancBridge |
@@ -66,12 +72,12 @@ PC lain dan ponsel petugas tidak perlu memasang Orthanc. Perangkat tersebut cuku
 Aturan akun:
 
 - Gunakan akun institusi, bukan akun pribadi petugas.
-- Aktifkan verifikasi dua langkah pada kedua akun Google.
+- Aktifkan verifikasi dua langkah pada ketiga akun Google.
 - Simpan metode pemulihan dan recovery code sesuai kebijakan institusi.
-- Batasi pemegang akun operasional dan backup kepada petugas yang diberi kewenangan atas data pasien.
+- Batasi pemegang akun operasional, backup, dan verifikator kepada petugas yang diberi kewenangan atas data pasien.
 - Jangan memakai password Google sebagai password aplikasi.
-- Jangan membagikan database, folder utama, atau folder backup dengan opsi **Anyone with the link**.
-- Jangan memasukkan password akun backup ke source, Script Properties, `config.json`, chat, atau Git.
+- Jangan membagikan database, folder utama, folder backup, atau folder verifikator dengan opsi **Anyone with the link**.
+- Jangan memasukkan password akun backup/verifikator ke source, Script Properties, `config.json`, chat, atau Git.
 
 ## 4. Cakupan koneksi ke akun backup
 
@@ -105,8 +111,9 @@ Siapkan dan catat:
 
 - [ ] Akun Google operasional Puskesmas aktif.
 - [ ] Akun Google backup aktif dan disetujui sebagai penyimpan data kesehatan.
-- [ ] Verifikasi dua langkah aktif pada kedua akun.
-- [ ] Ruang Drive kedua akun cukup untuk DICOM dan PDF.
+- [ ] Akun Google verifikator aktif dan disetujui untuk menerima PDF klaim.
+- [ ] Verifikasi dua langkah aktif pada ketiga akun.
+- [ ] Ruang Drive ketiga akun cukup untuk DICOM dan PDF.
 - [ ] Kebijakan Google Workspace mengizinkan deployment web app yang diperlukan.
 - [ ] Folder source `bpjs-usg-app` versi rilis tersedia.
 
@@ -170,6 +177,14 @@ Jika alat tidak mendukung DICOM Send/PACS, alur OrthancBridge tidak dapat diguna
 
 Koneksi antarakun dalam desain ini menggunakan izin folder. Tidak diperlukan password akun backup, OAuth client secret, atau service-account JSON.
 
+### Langkah A3 — Buat folder di akun verifikator
+
+1. Masuk ke Google Drive menggunakan akun verifikator.
+2. Buat folder privat `BPJS_USG_VERIFIKATOR_<NAMA_PUSKESMAS>` dengan **General access: Restricted**.
+3. Bagikan hanya folder tersebut kepada akun Google operasional sebagai **Editor**; jangan bagikan seluruh My Drive.
+4. Salin ID folder dan simpan sebagai Script Property `VERIFIER_DRIVE_FOLDER_ID` setelah source disinkronkan.
+5. Jangan menggunakan folder yang sama dengan Drive utama atau Drive backup.
+
 ## 7. Fase B — Membuat Apps Script pada akun Puskesmas
 
 ### Langkah B1 — Sesuaikan identitas Puskesmas sebelum setup pertama
@@ -228,7 +243,7 @@ Sebelum validasi backup:
 5. Pastikan fungsi selesai tanpa error.
 6. Catat hasil yang menampilkan:
 
-   - `appVersion` = `6.7.0-supporting-pdf-files`;
+   - `appVersion` = `6.10.1-verifier-readable-filenames`;
    - `databaseSpreadsheetId`;
    - `rootDriveFolderId`;
    - `claimsFolderId`;
@@ -299,6 +314,15 @@ ENABLE_SECONDARY_DRIVE_BACKUP = true
 
 Jangan mengaktifkan backup sebelum folder dan izin antarakun berhasil divalidasi.
 
+### Langkah C3 — Validasi folder verifikator
+
+1. Jalankan `setupApplication()` setelah source versi 6.10 disinkronkan.
+2. Jalankan `validateVerifierDriveConfiguration()` langsung sebagai `ADMIN_EMAIL`.
+3. Pastikan hasil berisi `success: true` dan `enabled: true`, serta subfolder privat `KLAIM` muncul pada akun verifikator.
+4. Pastikan sheet `SETTINGS` berisi `ENABLE_VERIFIER_DRIVE_DELIVERY = true`.
+5. Buat PDF klaim fiktif dan pastikan pesan pengiriman berhasil tampil serta nama terbaca `KLAIM_<Puskesmas>_<YYYYMMDD>_<NIK>_<NO_HP>_vNNN.pdf` muncul di folder verifikator.
+6. Untuk mengganti nama PDF verifikator lama yang masih `F1`, jalankan `renameExistingVerifierPdfFiles()` sebagai `ADMIN_EMAIL`. Jalankan ulang bila hasil menunjukkan masih ada lebih dari 100 klaim yang perlu diperiksa.
+
 ## 9. Fase D — Membuat deployment produksi
 
 1. Pada Apps Script, pilih **Deploy → New deployment**.
@@ -343,7 +367,7 @@ Jangan membuat satu username bersama untuk banyak petugas karena audit membutuhk
 
 ### Langkah E3 — Uji berkas pendukung PDF/JPEG/PNG
 
-Versi `6.7.0-supporting-pdf-files` tidak lagi memaksa kamera ponsel terbuka. Dari bagian **Unggah Berkas Pendukung**, petugas memilih berkas untuk kategori KTP, Buku KIA, SPP/FKPP BPJS, atau Berkas Lainnya.
+Sejak versi `6.7.0-supporting-pdf-files`, aplikasi tidak lagi memaksa kamera ponsel terbuka. Dari bagian **Unggah Berkas Pendukung**, petugas memilih berkas untuk kategori KTP, Buku KIA, SPP/FKPP BPJS, atau Berkas Lainnya.
 
 Aturan pemrosesan:
 
@@ -417,7 +441,7 @@ Destination Port     : 4242
 1. Jalankan C-ECHO atau fungsi **Verify** dari alat USG jika tersedia.
 2. Kirim satu studi DICOM fiktif.
 3. Pastikan studi muncul di Orthanc.
-4. Periksa nama pasien, PatientID, tanggal lahir, StudyDate, jumlah instance, dan preview.
+4. Periksa nama pasien, PatientID, PatientComments, NIK dan dokter yang terdeteksi, tanggal lahir, StudyDate, jumlah instance, dan preview.
 5. Jangan melanjutkan ke data pasien nyata sebelum uji fiktif berhasil.
 
 Jika terdapat beberapa alat USG, arahkan semuanya ke satu PC Orthanc pusat bila jaringan dan kapasitas memungkinkan. Catat AE Title dan IP setiap alat; jangan menggunakan IP dinamis tanpa reservasi.
@@ -509,16 +533,18 @@ Nilai `0 studies` tidak selalu berarti gagal. Periksa apakah `StudyDate` berada 
 ### Langkah G6 — Tinjau dan impor studi fiktif
 
 1. Di web app, buka menu **Orthanc**.
-2. Tinjau nama pasien, calon NIK, tanggal lahir, tanggal pemeriksaan, dan gambar.
+2. Tinjau nama pasien, nilai mentah ID/Comment, calon NIK, calon nama dokter, tanggal lahir, tanggal pemeriksaan, dan gambar.
 3. Isi No. HP secara manual.
-4. Pastikan `PatientID` hanya dipakai sebagai calon NIK jika tepat 16 digit.
-5. Pilih gambar yang benar.
-6. Konfirmasi bahwa data dan gambar berasal dari pasien yang sama.
-7. Buat klaim.
-8. Pastikan status klaim adalah **Mengumpulkan berkas**.
-9. Pastikan DICOM terkait klaim muncul pada folder utama klaim dan pada backup `DICOM`.
-10. Buat PDF uji dan pastikan muncul pada backup `KLAIM`.
-11. Jalankan bridge lagi dan pastikan studi yang sama tidak diduplikasi.
+4. Pastikan tepat satu NIK 16 digit dari `PatientID` atau `PatientComments` diisi otomatis; konflik harus menghasilkan peringatan dan isian manual.
+5. Klik thumbnail dan pastikan pratinjau besar terbuka tanpa mengubah centang pilihan gambar.
+6. Jika metadata nama/NIK kosong, gunakan teks yang tercetak pada gambar hanya sebagai petunjuk lalu cocokkan dengan sumber identitas pasien.
+7. Pilih gambar yang benar.
+8. Konfirmasi bahwa data dan gambar berasal dari pasien yang sama.
+9. Buat klaim.
+10. Pastikan status klaim adalah **Mengumpulkan berkas**.
+11. Pastikan DICOM terkait klaim muncul pada folder utama klaim dan pada backup `DICOM`.
+12. Buat PDF uji dan pastikan muncul pada backup `KLAIM`.
+13. Jalankan bridge lagi dan pastikan studi yang sama tidak diduplikasi.
 
 ### Langkah G7 — Jalankan otomatis
 
@@ -539,7 +565,7 @@ Gunakan data fiktif. Semua item berikut harus lulus.
 
 ### 13.1 Aplikasi dan hak akses
 
-- [ ] Header menampilkan versi `6.7.0-supporting-pdf-files`.
+- [ ] Header menampilkan versi `6.10.1-verifier-readable-filenames`.
 - [ ] ADMIN dapat membuka menu Pengguna dan Sistem.
 - [ ] STAFF tidak dapat membuka menu admin.
 - [ ] STAFF dari fasilitas lain tidak dapat melihat klaim tanpa izin eksplisit.
@@ -561,7 +587,7 @@ Gunakan data fiktif. Semua item berikut harus lulus.
 - [ ] Rotasi, urutan, dan pilihan gambar tetap benar setelah halaman dimuat ulang.
 - [ ] PDF `v001` dan `v002` dapat dibuat tanpa menimpa versi utama sebelumnya.
 - [ ] PDF baru diperiksa secara visual, bukan hanya dipastikan filenya ada.
-- [ ] Klaim selesai terkunci dan hanya ADMIN yang dapat membukanya kembali.
+- [ ] Klaim selesai terkunci dan dapat dibuka kembali oleh pengguna yang memiliki akses ke klaim; klaim di luar fasilitas/izin tetap tidak dapat diakses.
 
 ### 13.3 Orthanc dan backup
 
@@ -727,7 +753,7 @@ Isi tanpa menuliskan password atau kunci rahasia:
 | Email akun operasional |  |
 | Email pemilik akun backup |  |
 | Nama proyek Apps Script |  |
-| Versi aplikasi | `6.7.0-supporting-pdf-files` |
+| Versi aplikasi | `6.10.1-verifier-readable-filenames` |
 | URL produksi `/exec` |  |
 | Nama folder backup |  |
 | IP PC Orthanc |  |

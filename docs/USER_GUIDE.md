@@ -12,7 +12,7 @@ Kata sandi awal adalah `admin123`, kecuali administrator memberikan kata sandi s
 
 1. Buka menu **Klaim**.
 2. Klik **+ Buat Klaim Baru**.
-3. Isi nama pasien, NIK 16 angka, No. HP, tanggal lahir, tanggal pemeriksaan USG, dan fasilitas. No. HP dapat ditulis sebagai `08...` atau `+628...`.
+3. Isi nama pasien, NIK 16 angka, No. HP, **Nama Dokter**, tanggal lahir, tanggal pemeriksaan USG, dan fasilitas. No. HP dapat ditulis sebagai `08...` atau `+628...`.
 4. Periksa kembali data lalu klik **Simpan Klaim**.
 5. Sistem membuat kode klaim otomatis dan membuka halaman detail.
 
@@ -25,24 +25,26 @@ Jika menu **Orthanc** tersedia:
 1. Pastikan pemeriksaan dari alat USG sudah selesai dikirim ke Orthanc.
 2. Buka menu **Orthanc**, kemudian klik **Perbarui Daftar**.
 3. Pada pemeriksaan berstatus **Siap ditinjau**, klik **Tinjau**.
-4. Periksa dan koreksi nama pasien, NIK, No. HP, tanggal lahir, serta tanggal pemeriksaan. No. HP wajib diisi manual karena tidak berasal dari DICOM.
-5. Jika `PatientID` pada DICOM bukan NIK 16 angka, NIK tidak diisi otomatis dan wajib dimasukkan petugas.
-6. Periksa thumbnail dan pilih hanya gambar USG yang benar.
-7. Centang konfirmasi pasien, lalu klik **Buat Klaim dari Orthanc**.
-8. Klaim akan terbuka dengan status **Mengumpulkan berkas**. Lanjutkan unggah KTP, Buku KIA, SPP/FKPP BPJS, dan berkas lainnya seperti biasa.
+4. Periksa dan koreksi nama pasien, NIK, No. HP, **Nama Dokter**, tanggal lahir, serta tanggal pemeriksaan. No. HP wajib diisi manual karena tidak berasal dari DICOM.
+5. Aplikasi mencari satu NIK 16 digit dan nama dokter pada `PatientID` maupun `PatientComments`, sehingga keduanya boleh tertukar. Jika NIK tidak ditemukan atau terdapat dua nilai berbeda, NIK wajib dipilih dan dimasukkan petugas secara manual.
+6. Periksa juga ID dan Comment yang ditampilkan sebagai metadata sumber. Jika hanya satu kandidat nama dokter terdeteksi, aplikasi mengisikan **Nama Dokter** secara otomatis; petugas tetap wajib memeriksa dan dapat mengoreksinya.
+7. Klik thumbnail untuk membuka gambar lebih besar. Ini dapat membantu membaca nama atau NIK yang tercetak pada gambar bila metadata kosong. Membuka pratinjau tidak mengubah centang pilihan gambar.
+8. Cocokkan teks pada gambar dengan sumber identitas pasien, lalu pilih hanya gambar USG yang benar. Jangan menjadikan teks gambar sebagai satu-satunya dasar identifikasi.
+9. Centang konfirmasi pasien, lalu klik **Buat Klaim dari Orthanc**.
+10. Klaim akan terbuka dengan status **Mengumpulkan berkas**. Lanjutkan unggah KTP, Buku KIA, SPP/FKPP BPJS, dan berkas lainnya seperti biasa.
 
 Gunakan **Abaikan Pemeriksaan** hanya untuk data uji, duplikat, atau pemeriksaan yang tidak digunakan. Pemeriksaan yang sudah diabaikan dapat dilihat dengan mencentang **Tampilkan pemeriksaan yang sudah diimpor atau diabaikan**.
 
 ## Mencari dan membuka klaim
 
-- Gunakan kotak pencarian untuk kode klaim, nama pasien, NIK, atau No. HP.
+- Gunakan kotak pencarian untuk kode klaim, nama pasien, NIK, No. HP, atau nama dokter.
 - Gunakan filter status dan tanggal pemeriksaan bila diperlukan.
-- Daftar klaim menampilkan nama pasien, NIK, dan No. HP lengkap kepada pengguna yang berwenang.
-- Klik **Buka** untuk melihat detail klaim yang diizinkan. Halaman detail menampilkan NIK dan No. HP lengkap, jadi jangan biarkan halaman terbuka pada perangkat bersama.
+- Daftar klaim menampilkan nama pasien, NIK, No. HP, dan nama dokter lengkap kepada pengguna yang berwenang.
+- Klik **Buka** untuk melihat detail klaim yang diizinkan. Halaman detail menampilkan NIK, No. HP, dan nama dokter lengkap, jadi jangan biarkan halaman terbuka pada perangkat bersama.
 
 ## Mengubah klaim
 
-Pada status **Draf** atau **Mengumpulkan berkas**, klik **Edit Data Klaim**. Setelah data benar, klik **Mulai Pengumpulan Berkas**.
+Klik **Edit Data Klaim** pada klaim aktif untuk memperbaiki data atau melengkapi **Nama Dokter**. Jika klaim sudah berstatus **Siap**, **PDF dibuat**, atau **Selesai**, aplikasi meminta konfirmasi dan otomatis mengembalikannya ke **Mengumpulkan berkas**. PDF lama tetap tersimpan sebagai riwayat, tetapi PDF klaim wajib dibuat ulang sebelum klaim diselesaikan kembali. Klaim yang sudah diarsipkan tidak dapat diedit.
 
 ## Mengunggah gambar USG dari komputer
 
@@ -87,14 +89,15 @@ Rotasi, pilihan, dan urutan disimpan pada server sehingga tetap sama setelah hal
 
 1. Periksa bagian **Siapkan PDF Klaim**. Sedikitnya satu Gambar USG harus dipilih.
 2. Klik **Buat PDF**.
-3. Periksa kembali nama pasien, NIK lengkap, No. HP, tanggal USG, dan jumlah setiap jenis berkas.
+3. Periksa kembali nama pasien, NIK lengkap, No. HP, Nama Dokter, tanggal USG, dan jumlah setiap jenis berkas.
 4. Centang konfirmasi bahwa seluruh berkas berasal dari pasien yang sama.
 5. Klik **Ya, Buat PDF** dan tunggu sampai proses selesai.
-6. Gunakan **Pratinjau PDF** untuk memeriksa hasil.
-7. Jika hasil sudah benar, klik **Unduh PDF**.
-8. Klik **Selesaikan Klaim** untuk mengunci klaim.
+6. Jika Drive verifikator diaktifkan, pastikan muncul pesan **PDF berhasil dikirim ke Drive verifikator**. Jika pengiriman gagal, PDF utama tetap aman; laporkan pesan tersebut kepada administrator dan jangan menganggap berkas sudah diterima verifikator.
+7. Gunakan **Pratinjau PDF** untuk memeriksa hasil.
+8. Jika hasil sudah benar, klik **Unduh PDF**.
+9. Klik **Selesaikan Klaim** untuk mengunci klaim.
 
-Pembuatan ulang tidak menimpa PDF lama. Sistem membuat versi `v001`, `v002`, dan seterusnya. Jika klaim selesai perlu diperbaiki, administrator dapat memilih **Buka Kembali Klaim**; setelah berkas berubah, buat versi PDF baru sebelum menyelesaikan klaim kembali.
+Pembuatan ulang tidak menimpa PDF lama. Sistem membuat versi `v001`, `v002`, dan seterusnya. Jika klaim selesai perlu diperbaiki, pengguna yang memiliki akses ke klaim tersebut dapat memilih **Buka Kembali Klaim**; setelah data atau berkas berubah, buat versi PDF baru sebelum menyelesaikan klaim kembali.
 
 ## Administrator: mengarsipkan klaim
 

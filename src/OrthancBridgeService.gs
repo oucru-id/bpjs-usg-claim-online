@@ -512,6 +512,23 @@ function getOrthancInboxThumbnail(sessionToken, imageId) {
   }
 }
 
+function getOrthancInboxPreview(sessionToken, imageId) {
+  try {
+    requirePermission('can_create_claim', sessionToken);
+    var image = requireOrthancImage_(imageId);
+    var blob = getPrivateFileBlob_(image.drive_file_id);
+    var bytes = blob.getBytes();
+    var mimeType = normalizeString_(image.mime_type).toLowerCase();
+    assert_(['image/jpeg', 'image/png'].indexOf(mimeType) >= 0,
+      'ORTHANC_PREVIEW_TYPE_INVALID', 'Format gambar Orthanc tidak dapat ditampilkan.');
+    assert_(bytes.length > 0 && bytes.length <= UPLOAD_LIMITS.MAX_IMAGE_BYTES,
+      'ORTHANC_PREVIEW_TOO_LARGE', 'Gambar Orthanc terlalu besar untuk ditampilkan.');
+    return success_({ mime_type: mimeType, base64: Utilities.base64Encode(bytes) });
+  } catch (error) {
+    return publicError_(error);
+  }
+}
+
 function rejectOrthancInbox(sessionToken, inboxId) {
   try {
     var user = requirePermission('can_create_claim', sessionToken);
@@ -624,6 +641,7 @@ function createClaimFromOrthanc(sessionToken, payload) {
         patient_name: values.patient_name,
         patient_nik: values.patient_nik,
         patient_phone: values.patient_phone,
+        doctor_name: values.doctor_name,
         patient_birth_date: values.patient_birth_date,
         examination_date: values.examination_date,
         status: CLAIM_STATUSES.COLLECTING_DOCUMENTS,
@@ -770,21 +788,82 @@ function attachOriginalDicomsToExistingClaim_(inbox) {
 function normalizeOrthancStudyPayload_(bridgeId, payload) {
   var studyId = sanitizeOrthancIdentifier_(payload.orthanc_study_id, 120, 'ID studi Orthanc');
   var studyUid = sanitizeOrthancIdentifier_(payload.study_instance_uid, 160, 'Study Instance UID', true);
+  var patientName = sanitizePlainText_(normalizeString_(payload.patient_name).replace(/\^+/g, ' '), 120);
   var patientId = sanitizePlainText_(payload.patient_id, 80);
-  var digits = patientId.replace(/\D/g, '');
+  var patientComments = sanitizePlainText_(payload.patient_comments, 160);
+  var mixedMetadata = interpretDicomIdentityFields_(patientName, patientId, patientComments);
   return {
     bridge_id: bridgeId,
     source_key: orthancStudySourceKey_(bridgeId, studyUid, studyId),
     orthanc_study_id: studyId,
     study_instance_uid: studyUid,
-    patient_name: sanitizePlainText_(normalizeString_(payload.patient_name).replace(/\^+/g, ' '), 120),
+    patient_name: patientName,
     patient_id: patientId,
-    patient_nik_candidate: /^\d{16}$/.test(digits) ? digits : '',
+    patient_comments: patientComments,
+    patient_nik_candidate: mixedMetadata.patient_nik_candidate,
+    doctor_name_candidate: mixedMetadata.doctor_name_candidate,
+    metadata_warning: mixedMetadata.metadata_warning,
     patient_birth_date: orthancDateKey_(payload.patient_birth_date),
     study_date: orthancDateKey_(payload.study_date),
     accession_number: sanitizePlainText_(payload.accession_number, 80),
     study_description: sanitizePlainText_(payload.study_description, 160)
   };
+}
+
+function interpretDicomIdentityFields_(patientName, patientId, patientComments) {
+  var sources = [normalizeString_(patientId), normalizeString_(patientComments)].filter(Boolean);
+  var nikCandidates = uniqueDicomCandidates_(sources.map(dicomNikCandidate_).filter(Boolean), function (value) {
+    return value;
+  });
+  var doctorCandidates = uniqueDicomCandidates_(sources.map(function (value) {
+    return dicomDoctorCandidate_(value, patientName);
+  }).filter(Boolean), canonicalDicomText_);
+  var warnings = [];
+  if (nikCandidates.length > 1) {
+    warnings.push('Ditemukan lebih dari satu NIK 16 digit yang berbeda pada ID dan Comment DICOM. NIK wajib dipilih dan diperiksa manual.');
+  }
+  if (doctorCandidates.length > 1) {
+    warnings.push('Ditemukan lebih dari satu nama dokter yang berbeda pada ID dan Comment DICOM. Nama dokter tidak dipilih otomatis.');
+  }
+  return {
+    patient_nik_candidate: nikCandidates.length === 1 ? nikCandidates[0] : '',
+    doctor_name_candidate: doctorCandidates.length === 1 ? doctorCandidates[0] : '',
+    metadata_warning: warnings.join(' ')
+  };
+}
+
+function dicomNikCandidate_(value) {
+  var digits = normalizeString_(value).replace(/\D/g, '');
+  return /^\d{16}$/.test(digits) ? digits : '';
+}
+
+function dicomDoctorCandidate_(value, patientName) {
+  var text = normalizeString_(value).replace(/\^+/g, ' ');
+  if (!text || canonicalDicomText_(text) === canonicalDicomText_(patientName)) return '';
+  var explicitlyDoctor = /^\s*(?:DR\.?|DOKTER)(?:\s|$)/i.test(text);
+  if (dicomNikCandidate_(text)) text = text.replace(/\d/g, ' ');
+  if (/\d/.test(text) && !explicitlyDoctor) return '';
+  text = text
+    .replace(/\b(?:NO\.?\s*)?(?:NIK|KTP)\b/gi, ' ')
+    .replace(/\bID\b/gi, ' ')
+    .replace(/[\s:;,_\-./\\]+/g, ' ')
+    .trim();
+  if (!/[A-Za-z]/.test(text) || canonicalDicomText_(text) === canonicalDicomText_(patientName)) return '';
+  return sanitizePlainText_(text, 120);
+}
+
+function uniqueDicomCandidates_(values, keyFunction) {
+  var seen = {};
+  return values.filter(function (value) {
+    var key = keyFunction(value);
+    if (!key || seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+}
+
+function canonicalDicomText_(value) {
+  return normalizeString_(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
 function orthancStudySourceKey_(bridgeId, studyUid, studyId) {
@@ -875,6 +954,9 @@ function orthancInboxListItem_(inbox) {
     inbox_id: normalizeString_(inbox.inbox_id),
     patient_name: normalizeString_(inbox.patient_name),
     patient_id: normalizeString_(inbox.patient_id),
+    patient_comments: normalizeString_(inbox.patient_comments),
+    patient_nik_candidate: normalizeString_(inbox.patient_nik_candidate),
+    doctor_name_candidate: normalizeString_(inbox.doctor_name_candidate),
     patient_nik_available: Boolean(normalizeString_(inbox.patient_nik_candidate)),
     study_date: claimDateKey_(inbox.study_date),
     study_description: normalizeString_(inbox.study_description),
@@ -894,7 +976,10 @@ function orthancInboxForClient_(inbox) {
   var item = orthancInboxListItem_(inbox);
   item.patient_name = normalizeString_(inbox.patient_name);
   item.patient_id = normalizeString_(inbox.patient_id);
+  item.patient_comments = normalizeString_(inbox.patient_comments);
   item.patient_nik_candidate = normalizeString_(inbox.patient_nik_candidate);
+  item.doctor_name_candidate = normalizeString_(inbox.doctor_name_candidate);
+  item.metadata_warning = normalizeString_(inbox.metadata_warning);
   item.patient_birth_date = claimDateKey_(inbox.patient_birth_date);
   item.orthanc_study_id = normalizeString_(inbox.orthanc_study_id);
   item.study_instance_uid = normalizeString_(inbox.study_instance_uid);
