@@ -1,10 +1,10 @@
 # Sistem Klaim USG BPJS
 
-Google Apps Script application for integrated USG claim management, supporting documents, Orthanc DICOM intake, and private Drive backup. The existing FastAPI/LAN application in the parent directory is preserved; this sibling project does not use FastAPI, Node, Firebase, Supabase, PostgreSQL, or another backend.
+Google Apps Script application for integrated USG claim management, supporting documents, Orthanc DICOM intake, private Drive backup, optional Google Cloud Storage delivery, an optional BigQuery DICOM metadata registry, and a post-registry WhatsApp webhook trigger. The existing FastAPI/LAN application in the parent directory is preserved; this sibling project does not use FastAPI, Node, Firebase, Supabase, PostgreSQL, or another backend.
 
 Current milestone: **complete claim workflow plus a confirm-before-import OrthancBridge integration for a single Puskesmas**.
 
-Current application version: **`6.10.1-verifier-readable-filenames`**. This release retains the doctor/schema safeguards and adds automatic, status-tracked delivery of each generated PDF version to a separate private verifier Drive folder using its readable logical filename.
+Current application version: **`7.2.0-whatsapp-photo-selection`**. The authorized WhatsApp console now requires users to select individual USG photos before sending, tracks delivery per selected batch, and retains compatibility with legacy manual image references. The Drive/GCS channels remain independent.
 
 Implemented:
 
@@ -37,6 +37,12 @@ Implemented:
 - local outbound-only OrthancBridge ingestion with hashed bearer-key authentication;
 - Orthanc inbox review with clickable full-size private image preview, flexible NIK/doctor detection from `PatientID` and `PatientComments`, DICOM metadata prefill, JPEG preview import, duplicate-study protection, and stored Study/Series/Instance references;
 - resumable upload of each original DICOM instance into the private claim `DICOM` folder;
+- optional direct GCS upload of content-addressed DICOM and converted JPEG objects from OrthancBridge, independent of web app/Drive delivery;
+- optional BigQuery registry with one row per study and one row per GCS object, including provenance-aware NIK/phone/doctor interpretation;
+- optional authenticated n8n trigger after GCS and BigQuery succeed, with separate local completion/retry state;
+- optional in-app WhatsApp menu showing patients and private GCS USG previews, with per-photo selection, per-photo sent/pending state, and a permission-checked manual send/retry action;
+- optional automatic WhatsApp trigger that reads identity from BigQuery, selects only the first ordered JPEG, and leaves additional photos available for manual sending;
+- optional upload of the anonymous `F1` claim PDF to private GCS when **Selesaikan Klaim** is confirmed;
 - optional secondary-Drive backup of original DICOM files and generated claim PDFs using anonymous deterministic storage names, with private database reconstruction metadata;
 - fail-closed access-denied page;
 - Bahasa Indonesia responsive application shell;
@@ -62,7 +68,7 @@ bpjs-usg-app/
 
 ## Deploy
 
-Read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). In short: replace the Apps Script files, delete the obsolete OAuth service, run `setupApplication()`, redeploy as the administrator, then use Pengguna to assign usernames. New accounts use `admin123` and must change it immediately after the first login. For Orthanc, continue with [docs/ORTHANC_BRIDGE.md](docs/ORTHANC_BRIDGE.md).
+Read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). In short: replace the Apps Script files, delete the obsolete staff-login OAuth service, run `setupApplication()`, redeploy as the administrator, then use Pengguna to assign usernames. New accounts use `admin123` and must change it immediately after the first login. For Orthanc, continue with [docs/ORTHANC_BRIDGE.md](docs/ORTHANC_BRIDGE.md). For dual Drive/GCS setup, use [docs/GCS_DUAL_DELIVERY.md](docs/GCS_DUAL_DELIVERY.md). For the optional metadata registry, use [docs/BIGQUERY_DICOM_REGISTRY.md](docs/BIGQUERY_DICOM_REGISTRY.md).
 
 Never grant normal staff direct access to the database Spreadsheet, root folder, claim folders, or stored files.
 
@@ -73,6 +79,7 @@ From this directory in PowerShell:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tests\static-checks.ps1
 node .\tests\auth-flow-tests.js
+node .\tests\admin-password-reset-tests.js
 node .\tests\browser-auth-smoke.js
 node .\tests\client-image-tests.js
 node .\tests\pdf-layout-tests.js
@@ -82,6 +89,8 @@ node .\tests\identity-display-tests.js
 node .\tests\claim-phone-tests.js
 node .\tests\claim-doctor-reopen-tests.js
 node .\tests\orthanc-service-tests.js
+node .\tests\gcs-service-tests.js
+node .\tests\whatsapp-service-tests.js
 .\orthanc-bridge\.venv\Scripts\python.exe -m unittest discover -s .\orthanc-bridge\tests -v
 ```
 
@@ -97,6 +106,6 @@ The backup root receives private `DICOM RAW`, `DICOM`, and `KLAIM` subfolders. E
 
 Create a separate private folder in the verifier's Google Drive account and share only that folder as **Editor** with the Apps Script deployment account. Set its ID as the `VERIFIER_DRIVE_FOLDER_ID` Script Property, run `setupApplication()`, then run `validateVerifierDriveConfiguration()` once from the Apps Script editor. This enables automatic delivery of every newly generated PDF to the verifier folder; the primary PDF and secondary backup remain independent.
 
-The verifier root receives a private `KLAIM` subfolder. Unlike the primary and backup Drive copies, verifier files use the readable logical name `KLAIM_<Puskesmas>_<YYYYMMDD>_<NIK>_<NO_HP>_vNNN.pdf`. Earlier versions are retained for verification history. The file ID, private URL, timestamp, and delivery status stay in the private `CLAIMS` sheet, and no verifier Drive URL is returned to the staff browser. Because the filename contains patient identifiers, keep this folder restricted. Do not enable link sharing or store the verifier account password, OAuth secret, or service-account JSON in the project.
+The verifier root receives one Indonesian month folder per examination date directly below the configured parent, for example `OKTOBER 2026`; no intermediate `KLAIM` folder is created. Unlike the primary and backup Drive copies, the latest verifier copy uses the readable name `KLAIM_USG_PKM_<PUSKESMAS>_<YYYYMMDD>_<NAMA_PASIEN>_<NIK>_DR_<NAMA_DOKTER>.pdf`. Regenerating a claim replaces its previously tracked verifier copy; versioned history remains available in the primary claim `OUTPUT` folder. The file ID, private URL, timestamp, and delivery status stay in the private `CLAIMS` sheet, and no verifier Drive URL is returned to the staff browser. Because the filename contains patient identifiers, keep this folder restricted. Do not enable link sharing or store the verifier account password, OAuth secret, or service-account JSON in the project.
 
 The administrator should back up the database Spreadsheet and private Drive tree according to the organization’s approved health-data retention and encryption policy. Do not copy patient files to public or personal storage. Test restoration periodically and preserve the relationship between metadata and Drive file IDs.

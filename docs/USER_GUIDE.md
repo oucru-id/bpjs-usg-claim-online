@@ -44,7 +44,7 @@ Gunakan **Abaikan Pemeriksaan** hanya untuk data uji, duplikat, atau pemeriksaan
 
 ## Mengubah klaim
 
-Klik **Edit Data Klaim** pada klaim aktif untuk memperbaiki data atau melengkapi **Nama Dokter**. Jika klaim sudah berstatus **Siap**, **PDF dibuat**, atau **Selesai**, aplikasi meminta konfirmasi dan otomatis mengembalikannya ke **Mengumpulkan berkas**. PDF lama tetap tersimpan sebagai riwayat, tetapi PDF klaim wajib dibuat ulang sebelum klaim diselesaikan kembali. Klaim yang sudah diarsipkan tidak dapat diedit.
+Klik **Edit Data Klaim** pada klaim aktif untuk memperbaiki data atau melengkapi **Nama Dokter**. Jika klaim berstatus **Siap** atau **PDF dibuat**, aplikasi meminta konfirmasi dan mengembalikannya ke **Mengumpulkan berkas** agar PDF dibuat ulang. Klaim berstatus **Selesai** terkunci dan tidak menampilkan tombol edit. Klik **Buka Kembali Klaim** terlebih dahulu; setelah status berubah menjadi **Mengumpulkan berkas**, data baru dapat diedit. Klaim yang sudah diarsipkan tidak dapat diedit.
 
 ## Mengunggah gambar USG dari komputer
 
@@ -92,10 +92,10 @@ Rotasi, pilihan, dan urutan disimpan pada server sehingga tetap sama setelah hal
 3. Periksa kembali nama pasien, NIK lengkap, No. HP, Nama Dokter, tanggal USG, dan jumlah setiap jenis berkas.
 4. Centang konfirmasi bahwa seluruh berkas berasal dari pasien yang sama.
 5. Klik **Ya, Buat PDF** dan tunggu sampai proses selesai.
-6. Jika Drive verifikator diaktifkan, pastikan muncul pesan **PDF berhasil dikirim ke Drive verifikator**. Jika pengiriman gagal, PDF utama tetap aman; laporkan pesan tersebut kepada administrator dan jangan menganggap berkas sudah diterima verifikator.
+6. Jika Drive verifikator diaktifkan, pastikan muncul pesan **PDF berhasil dikirim ke Drive verifikator**. Sistem menaruh salinan terbaru langsung di folder bulan pemeriksaan, misalnya `OKTOBER 2026`, tanpa folder perantara `KLAIM`.
 7. Gunakan **Pratinjau PDF** untuk memeriksa hasil.
 8. Jika hasil sudah benar, klik **Unduh PDF**.
-9. Klik **Selesaikan Klaim** untuk mengunci klaim.
+9. Klik **Selesaikan Klaim** untuk mengunci klaim. Jika GCS diaktifkan, pada tahap ini pastikan muncul pesan **PDF disimpan ke Google Cloud Storage**. Jika pengiriman GCS gagal, PDF utama tetap aman dan klaim tetap selesai; laporkan pesan tersebut kepada administrator.
 
 Pembuatan ulang tidak menimpa PDF lama. Sistem membuat versi `v001`, `v002`, dan seterusnya. Jika klaim selesai perlu diperbaiki, pengguna yang memiliki akses ke klaim tersebut dapat memilih **Buka Kembali Klaim**; setelah data atau berkas berubah, buat versi PDF baru sebelum menyelesaikan klaim kembali.
 

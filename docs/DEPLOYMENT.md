@@ -11,6 +11,7 @@ Important:
 - add `PasswordAuthService.gs`;
 - add `ClaimService.gs` and `DriveService.gs`;
 - add `DocumentService.gs`, `TokenService.gs`, and `VendorQrCode.html`;
+- add `GcsService.gs` and copy `appsscript.json` so the pinned OAuth2 library dependency is included;
 - add `PdfService.gs`;
 - add `BackupService.gs`;
 - add `OrthancBridgeService.gs`;
@@ -51,7 +52,17 @@ Version 6.5 adds anonymous deterministic `F1` storage filenames plus private log
 
 Version 6.10 adds automatic delivery of each newly generated PDF version to a separate private verifier Drive folder, with status metadata in `CLAIMS` and no verifier URL exposed to staff. Version 6.10.1 changes only the verifier copy to a readable logical filename; primary and backup copies remain anonymous.
 
-After a successful migration, the application header should display `6.10.1-verifier-readable-filenames`. The setup result includes `repairedClaimDoctorRows`; if it is greater than zero, review those repaired claims before resuming normal work.
+Version 6.10.2 locks completed claim data in both the browser and server. **Edit Data Klaim** becomes available only after **Buka Kembali Klaim** changes the status to Collecting Documents.
+
+Version 6.11 changes only the verifier copy: it uses `KLAIM_USG_PKM_<PUSKESMAS>_<YYYYMMDD>_<NAMA_PASIEN>_<NIK>_DR_<NAMA_DOKTER>.pdf`, places it directly in a folder such as `OKTOBER 2026` below the configured verifier parent based on the examination date, and keeps only the latest tracked verifier copy for each claim. No intermediate `KLAIM` folder is created. Primary and backup naming and primary PDF version history are unchanged.
+
+Version 7.0 adds dual OrthancBridge destinations and GCS PDF delivery. Python can send DICOM/JPEG to GCS independently of its existing web app/Drive path. Apps Script sends the reviewed anonymous `F1` PDF to GCS when **Selesaikan Klaim** is confirmed. Follow [GCS_DUAL_DELIVERY.md](GCS_DUAL_DELIVERY.md); never add a credential JSON file to `src` or Git.
+
+Version 7.1 adds the in-app WhatsApp console. It reads the bridge-scoped study list and delivery outbox from BigQuery, serves private GCS JPEG previews only through an authorized backend call, and sends manual requests to the production n8n webhook with a stable `delivery_reference_id`. Follow [BIGQUERY_DICOM_REGISTRY.md](BIGQUERY_DICOM_REGISTRY.md); leave `ENABLE_WHATSAPP_DELIVERY=false` until the outbox table, IAM, webhook authentication, and status updates have passed fictitious-data testing.
+
+Version 7.2 adds explicit per-photo selection. Before deploying it, add `selected_object_keys ARRAY<STRING>` to `whatsapp_deliveries` using the migration in `orthanc-bridge/bigquery_schema.sql`, and update n8n so manual requests query only the `selected_object_keys` supplied in the webhook. Do not deploy the UI first while n8n still queries every JPEG by `study_key`.
+
+After a successful migration, the application header should display `7.2.0-whatsapp-photo-selection`. The setup result includes `repairedClaimDoctorRows`; if it is greater than zero, review those repaired claims before resuming normal work.
 
 After deployment, log in as administrator, open **Sistem**, and run **Jalankan Diagnostik**. The server-side self-test function requires an application session token and is not intended to be run directly from the Apps Script editor.
 
@@ -101,6 +112,18 @@ Do not reuse personal email, banking, or Google passwords.
 8. Confirm the staff user still cannot open the private Spreadsheet or Drive folder.
 
 Any password reset performed from **Pengguna** is temporary and forces the user through the same password-change screen.
+
+### Recover a forgotten installer-administrator password
+
+If the administrator account tied to `ADMIN_EMAIL` cannot log in, do not change `PASSWORD_PEPPER`, edit the password hash manually, or create a public reset endpoint.
+
+1. Open the Apps Script project while signed in as the Google account recorded in `ADMIN_EMAIL`.
+2. Select `resetAdminPassword` in the function list and click **Run**.
+3. Confirm the execution result reports `success: true` and note the returned administrator username.
+4. Open the production `/exec` URL in an incognito/private window and sign in with that username and the temporary password `admin123`.
+5. Create a different password when the mandatory password-change screen appears.
+
+The recovery function verifies the active Google identity and resets only the configured installer administrator. If `AUTH_CREDENTIALS` does not yet contain that administrator, the function creates a unique username (normally `admin`) and returns it. It also clears any login lock, revokes all existing sessions for that administrator, stores only a newly salted and peppered hash, and writes `ADMIN_PASSWORD_RESET` to `AUDIT_LOG`.
 
 ## 6. Test user deletion
 
@@ -159,8 +182,8 @@ Continue using only fictitious documents.
 7. Confirm the PDF cover displays the complete 16-digit NIK, No. HP, and doctor name.
 8. Use **Pratinjau PDF** and **Unduh PDF** from the web app. Confirm the staff account still cannot open the Drive file directly.
 9. Create the PDF again and confirm version `v002` is created without overwriting `v001`.
-10. Click **Selesaikan Klaim** and confirm upload, rotation, selection, ordering, and deletion are locked.
-11. While still logged in as STAFF with access to the claim, click **Buka Kembali Klaim**, change one document, regenerate the PDF, and complete the claim again. Confirm a staff user outside the claim's access boundary still cannot open or reopen it.
+10. Click **Selesaikan Klaim** and confirm upload, rotation, selection, ordering, deletion, and **Edit Data Klaim** are locked. A direct `updateClaim` request must return `CLAIM_REOPEN_REQUIRED`.
+11. While still logged in as STAFF with access to the claim, click **Buka Kembali Klaim**. Confirm **Edit Data Klaim** becomes available only after the status changes to **Mengumpulkan berkas**, then change data or one document, regenerate the PDF, and complete the claim again. Confirm a staff user outside the claim's access boundary still cannot open or reopen it.
 12. Review `AUDIT_LOG` for `DOCUMENT_SELECTION_UPDATED`, `DOCUMENT_ROTATED`, `DOCUMENTS_REORDERED`, `PDF_GENERATED`, `PDF_PREVIEWED`, `PDF_DOWNLOADED`, `CLAIM_COMPLETED`, and `CLAIM_REOPENED`.
 
 If Google Docs conversion fails or requests authorization, sign in as the deploying administrator, approve the Google Documents scope, then retry. Do not grant staff direct access to the temporary document or output PDF.
@@ -212,14 +235,27 @@ Do not paste the second account's password or credential JSON into Apps Script, 
 2. Share only that folder as **Editor** with the Google account that owns/deploys the Apps Script web app. Do not enable link sharing and do not share the whole verifier Drive.
 3. Copy the folder ID from its Drive URL and add it in **Project Settings -> Script Properties** as `VERIFIER_DRIVE_FOLDER_ID`. The folder must be different from `ROOT_DRIVE_FOLDER_ID` and `BACKUP_DRIVE_FOLDER_ID`.
 4. Synchronize/deploy this source, then run `setupApplication()` once so the new `CLAIMS` columns and `ENABLE_VERIFIER_DRIVE_DELIVERY` setting exist.
-5. Run `validateVerifierDriveConfiguration()` directly from the Apps Script editor. It validates write access, creates the private `KLAIM` subfolder if needed, removes its temporary probe file, and enables delivery.
-6. Generate a PDF for a fictitious claim. Confirm the application reports **PDF berhasil dikirim ke Drive verifikator** and the verifier `KLAIM` folder contains `KLAIM_<Puskesmas>_<YYYYMMDD>_<NIK>_<NO_HP>_v001.pdf`.
-7. Regenerate the PDF and confirm `v002` is added while `v001` remains available as verification history.
+5. Run `validateVerifierDriveConfiguration()` directly from the Apps Script editor. It validates write access to the configured parent folder, removes its temporary probe file, and enables delivery. It does not create an intermediate `KLAIM` folder.
+6. Generate a PDF for a fictitious claim dated 3 October 2026. Confirm the application reports **PDF berhasil dikirim ke Drive verifikator** and the verifier parent contains `OKTOBER 2026/KLAIM_USG_PKM_<PUSKESMAS>_20261003_<NAMA_PASIEN>_<NIK>_DR_<NAMA_DOKTER>.pdf`.
+7. Regenerate the PDF and confirm the previously tracked verifier copy is replaced by the new PDF without adding a version suffix. Confirm the primary claim `OUTPUT` folder still retains its normal `v001`, `v002`, and later versions.
 8. In the private `CLAIMS` sheet, confirm `verifier_pdf_file_id`, logical/storage filenames, URL, timestamp, and `verifier_pdf_status=READY` are populated for the latest version. Do not expose the URL in the staff UI.
 9. Run **Sistem -> Jalankan Diagnostik** and confirm `Folder Drive verifikator` is `OK`.
 10. Test a controlled failure by temporarily removing Editor access, generate a fictitious PDF, and confirm the primary PDF remains available while the UI reports the verifier delivery failure. Restore Editor access and repeat with a new PDF version.
 
-This feature sends PDFs generated after it is enabled. To rename the latest already-tracked verifier PDF for each claim from `F1` to its readable name, run `renameExistingVerifierPdfFiles()` directly as `ADMIN_EMAIL`; it processes at most 100 claims per run and may be run repeatedly. The readable verifier filename and PDF body contain patient data, so the verifier folder must follow the approved clinical-data access and retention policy.
+This feature sends PDFs generated after it is enabled. To rename and move the latest already-tracked verifier PDF for each claim directly into its examination-month folder, including files currently under `KLAIM/<BULAN>`, run `organizeExistingVerifierPdfFiles()` directly as `ADMIN_EMAIL`; it processes at most 100 files per run and may be run repeatedly while `hasMore` is `true`. The compatibility alias `renameExistingVerifierPdfFiles()` performs the same operation. Only the latest file ID tracked in each `CLAIMS` row is migrated; older untracked historical verifier copies and the old `KLAIM` folder are left unchanged for an administrator to review under the approved retention policy. The readable verifier filename and PDF body contain patient data, so the verifier folder must follow the approved clinical-data access and retention policy.
+
+## 13. Configure and test Google Cloud Storage
+
+1. Follow [GCS_DUAL_DELIVERY.md](GCS_DUAL_DELIVERY.md) to secure the service-account key and configure the Python bridge.
+2. Run `setupApplication()` so `ENABLE_GCS_PDF_DELIVERY` and the `gcs_pdf_*` columns exist.
+3. Add `GCS_BUCKET_NAME`, `GCS_OBJECT_PREFIX`, and `GCS_SERVICE_ACCOUNT_KEY` only in Script Properties.
+4. Run `validateGcsConfiguration()` as `ADMIN_EMAIL`. Confirm its nonclinical probe is removed and the setting becomes `true`.
+5. Create a fictitious claim, click **Buat PDF**, and confirm `gcs_pdf_status=WAITING_COMPLETION`; no claim PDF should exist in GCS yet.
+6. Preview the result, then click **Selesaikan Klaim** only after it is correct. Confirm the UI reports GCS delivery, `gcs_pdf_status=READY`, and the anonymous `KLAIM_F1<KODE>_vNNN.pdf` object exists.
+7. Run system diagnostics and confirm **Google Cloud Storage PDF** is `OK`.
+8. Create a New version, update the deployment, and retest a fresh `/exec` URL before live operation.
+
+If a completed claim records `gcs_pdf_status=ERROR`, correct the configuration and run `retryFailedGcsPdfDeliveries()` as `ADMIN_EMAIL`. It processes at most 100 `COMPLETED` claims per run and can be repeated while `hasMore` is `true`.
 
 ## Removing the unused Google OAuth configuration
 

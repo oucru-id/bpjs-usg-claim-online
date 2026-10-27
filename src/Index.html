@@ -81,6 +81,23 @@
       </div>
     </section>
 
+    <section id="view-whatsapp" class="view hidden">
+      <div class="section-heading">
+        <div><h1>Pengiriman Foto USG via WhatsApp</h1><p>Lihat foto USG yang siap dikirim, periksa status pengiriman, dan kirim secara manual.</p></div>
+        <button id="refresh-whatsapp-button" class="primary" type="button">Perbarui Daftar</button>
+      </div>
+      <p class="warning-box">Pilih foto yang akan dikirim menggunakan kotak pilihan di bawah setiap gambar. Hanya foto terpilih yang dikirim. Status “Dalam proses” belum berarti pesan sudah terkirim.</p>
+      <form id="whatsapp-filter-form" class="card whatsapp-filter-form">
+        <label>Cari pasien<input name="search" type="search" maxlength="80" placeholder="Nama, NIK, No. HP, atau dokter"></label>
+        <label>Status pengiriman<select name="status"><option value="">Semua status</option><option value="NOT_SENT">Belum dikirim</option><option value="PENDING">Dalam proses</option><option value="PARTIAL">Sebagian terkirim</option><option value="SENT">Semua terkirim</option><option value="FAILED">Gagal</option></select></label>
+        <div class="filter-actions"><button type="button" id="reset-whatsapp-filter">Atur Ulang</button><button class="primary" type="submit">Cari</button></div>
+      </form>
+      <div id="whatsapp-summary" class="grid five summary-grid"></div>
+      <div id="whatsapp-loading" class="card empty-state hidden" role="status">Memuat daftar foto USG...</div>
+      <div id="whatsapp-study-list" class="whatsapp-study-list"></div>
+      <p id="whatsapp-empty" class="card empty-state hidden">Belum ada pemeriksaan USG yang sesuai.</p>
+    </section>
+
     <section id="view-claim" class="view hidden">
       <div class="section-heading">
         <div><button id="back-to-claims" class="back-button" type="button">&larr; Kembali ke daftar</button><h1 id="claim-detail-code">Detail Klaim</h1></div>
@@ -229,6 +246,13 @@
           <button id="rotate-orthanc-key-button" class="primary" type="button">Buat Kunci Koneksi</button>
         </div>
       </div>
+      <div class="card orthanc-system-card">
+        <div class="section-heading compact-heading"><div><h2>Pengiriman WhatsApp</h2><p>Aktifkan menu setelah BigQuery, GCS privat, dan production webhook n8n dikonfigurasi.</p></div><span id="whatsapp-system-badge" class="status off">Belum diperiksa</span></div>
+        <p id="whatsapp-system-message" class="muted">Status konfigurasi belum diperiksa.</p>
+        <div class="actions orthanc-system-actions">
+          <button id="toggle-whatsapp-delivery-button" type="button">Aktifkan WhatsApp</button>
+        </div>
+      </div>
       <div class="card"><h2>Pemeriksaan</h2><ul id="diagnostics-list" class="checks"><li>Belum dijalankan.</li></ul></div>
     </section>
   </main>
@@ -251,6 +275,7 @@
         <label class="check"><input name="can_view_all_claims" type="checkbox"> Lihat semua klaim</label>
         <label class="check"><input name="can_generate_pdf" type="checkbox" checked> Buat PDF</label>
         <label class="check"><input name="can_download_pdf" type="checkbox" checked> Unduh PDF</label>
+        <label class="check"><input name="can_send_whatsapp" type="checkbox"> Kirim foto USG melalui WhatsApp</label>
       </fieldset>
       <div class="actions"><button type="button" id="cancel-user-button">Batal</button><button class="primary" id="save-user-button" type="submit">Simpan</button></div>
     </form>

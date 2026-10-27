@@ -2,9 +2,9 @@
 
 ## Puskesmas dengan PC dan Akun Google Sendiri, Terhubung ke Akun Backup dan Verifikator
 
-**Versi aplikasi acuan:** `6.10.1-verifier-readable-filenames`
+**Versi aplikasi acuan:** `7.1.0-whatsapp-console`
 
-**Tanggal dokumen:** 3 Oktober 2026
+**Tanggal dokumen:** 20 Oktober 2026
 **Sasaran:** administrator TI, penanggung jawab program, dan petugas Puskesmas
 
 ---
@@ -18,10 +18,13 @@ Dokumen ini menjelaskan pemasangan satu ekosistem Sistem Klaim USG BPJS pada Pus
 3. Alat USG mengirim DICOM ke Orthanc pada PC Puskesmas melalui jaringan lokal.
 4. OrthancBridge mengirim data keluar melalui HTTPS ke Apps Script; Orthanc tidak dibuka ke internet.
 5. Akun Google backup yang terpisah menyimpan salinan DICOM dan PDF klaim pada folder privat.
-6. Akun Google verifikator yang terpisah menerima setiap versi PDF yang baru dibuat pada folder privat.
-7. Petugas tetap harus memeriksa identitas pasien sebelum pemeriksaan Orthanc dibuat menjadi klaim.
+6. Akun Google verifikator yang terpisah menerima salinan PDF terbaru pada folder privat per bulan pemeriksaan.
+7. Secara opsional, OrthancBridge menyimpan DICOM/JPEG anonim ke bucket GCS privat dan web app menyimpan PDF anonim ke GCS saat petugas menekan **Selesaikan Klaim**.
+8. Petugas tetap harus memeriksa identitas pasien sebelum pemeriksaan Orthanc dibuat menjadi klaim.
 
 Panduan ini adalah prosedur instalasi baru. Jangan menyalin rahasia, password pepper, kunci bridge, sesi, atau berkas konfigurasi privat dari Puskesmas lain.
+
+Untuk konfigurasi GCS, ikuti [GCS_DUAL_DELIVERY.md](GCS_DUAL_DELIVERY.md) setelah alur utama Drive dan Orthanc lulus uji fiktif. Menonaktifkan kanal Python Drive membuat studi tidak masuk ke Kotak Masuk Orthanc; web app sendiri tetap membutuhkan Drive privat.
 
 ### Catatan penting untuk rilis terbaru
 
@@ -53,7 +56,7 @@ Akun Google backup
 
 Akun Google verifikator
   `- Folder privat BPJS_USG_VERIFIKATOR
-       `- KLAIM (PDF per versi)
+       `- OKTOBER 2026 (salinan PDF terbaru per klaim)
 ```
 
 PC lain dan ponsel petugas tidak perlu memasang Orthanc. Perangkat tersebut cukup membuka URL produksi `/exec` melalui browser dan masuk memakai username/password aplikasi.
@@ -243,7 +246,7 @@ Sebelum validasi backup:
 5. Pastikan fungsi selesai tanpa error.
 6. Catat hasil yang menampilkan:
 
-   - `appVersion` = `6.10.1-verifier-readable-filenames`;
+   - `appVersion` = `7.1.0-whatsapp-console`;
    - `databaseSpreadsheetId`;
    - `rootDriveFolderId`;
    - `claimsFolderId`;
@@ -316,12 +319,13 @@ Jangan mengaktifkan backup sebelum folder dan izin antarakun berhasil divalidasi
 
 ### Langkah C3 — Validasi folder verifikator
 
-1. Jalankan `setupApplication()` setelah source versi 6.10 disinkronkan.
+1. Jalankan `setupApplication()` setelah source versi 6.11 disinkronkan.
 2. Jalankan `validateVerifierDriveConfiguration()` langsung sebagai `ADMIN_EMAIL`.
-3. Pastikan hasil berisi `success: true` dan `enabled: true`, serta subfolder privat `KLAIM` muncul pada akun verifikator.
+3. Pastikan hasil berisi `success: true` dan `enabled: true`. Validasi tidak membuat folder perantara `KLAIM`.
 4. Pastikan sheet `SETTINGS` berisi `ENABLE_VERIFIER_DRIVE_DELIVERY = true`.
-5. Buat PDF klaim fiktif dan pastikan pesan pengiriman berhasil tampil serta nama terbaca `KLAIM_<Puskesmas>_<YYYYMMDD>_<NIK>_<NO_HP>_vNNN.pdf` muncul di folder verifikator.
-6. Untuk mengganti nama PDF verifikator lama yang masih `F1`, jalankan `renameExistingVerifierPdfFiles()` sebagai `ADMIN_EMAIL`. Jalankan ulang bila hasil menunjukkan masih ada lebih dari 100 klaim yang perlu diperiksa.
+5. Buat PDF klaim fiktif dan pastikan pesan pengiriman berhasil tampil. Pastikan file muncul langsung pada folder bulan pemeriksaan, misalnya `OKTOBER 2026/KLAIM_USG_PKM_MENINTING_20261003_TES_NAMA_1234567890123456_DR_TES_DUA.pdf`.
+6. Buat ulang PDF dan pastikan salinan verifikator lama untuk klaim tersebut diganti tanpa akhiran versi; riwayat versi PDF utama tetap tersedia.
+7. Untuk mengganti nama dan memindahkan PDF verifikator lama yang terbaru dan masih terlacak keluar dari folder `KLAIM` langsung ke folder bulan, jalankan `organizeExistingVerifierPdfFiles()` sebagai `ADMIN_EMAIL`. Jalankan ulang selama hasil `hasMore` masih `true`. File historis lama yang tidak lagi terlacak dan folder `KLAIM` lama tidak dihapus otomatis.
 
 ## 9. Fase D — Membuat deployment produksi
 
@@ -350,6 +354,8 @@ Setiap pembaruan source harus dibuat sebagai **New version** pada deployment yan
 6. Simpan. Setelah username administrator dibuat, bypass installer tidak lagi dipakai.
 7. Keluar dan masuk kembali menggunakan username aplikasi.
 8. Ganti password sementara saat diminta.
+
+Jika administrator pemasang lupa kata sandi aplikasi, masuk ke editor Apps Script menggunakan akun Google yang tercatat sebagai `ADMIN_EMAIL`, pilih fungsi `resetAdminPassword`, lalu klik **Run**. Bila baris administrator belum ada di `AUTH_CREDENTIALS`, fungsi akan membuat username unik (biasanya `admin`) dan menampilkannya pada hasil eksekusi. Fungsi kemudian menetapkan kata sandi sementara `admin123`, mencabut seluruh sesi lama, dan mewajibkan penggantian kata sandi pada login berikutnya. Jangan mengubah `PASSWORD_PEPPER` atau hash di sheet secara manual.
 
 ### Langkah E2 — Buat akun STAFF
 
@@ -565,7 +571,7 @@ Gunakan data fiktif. Semua item berikut harus lulus.
 
 ### 13.1 Aplikasi dan hak akses
 
-- [ ] Header menampilkan versi `6.10.1-verifier-readable-filenames`.
+- [ ] Header menampilkan versi `7.1.0-whatsapp-console`.
 - [ ] ADMIN dapat membuka menu Pengguna dan Sistem.
 - [ ] STAFF tidak dapat membuka menu admin.
 - [ ] STAFF dari fasilitas lain tidak dapat melihat klaim tanpa izin eksplisit.
@@ -753,7 +759,7 @@ Isi tanpa menuliskan password atau kunci rahasia:
 | Email akun operasional |  |
 | Email pemilik akun backup |  |
 | Nama proyek Apps Script |  |
-| Versi aplikasi | `6.10.1-verifier-readable-filenames` |
+| Versi aplikasi | `7.1.0-whatsapp-console` |
 | URL produksi `/exec` |  |
 | Nama folder backup |  |
 | IP PC Orthanc |  |

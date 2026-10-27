@@ -8,3 +8,8 @@ tmp/
 dist/
 coverage/
 patient-data/
+orthanc-bridge/config.json
+orthanc-bridge/state.json
+orthanc-bridge/*credential*.json
+orthanc-bridge/*service-account*.json
+orthanc-bridge/.venv/

@@ -55,7 +55,7 @@ function includeOptional_(filename) {
 
 function sanitizeView_(requestedView) {
   var view = normalizeString_(requestedView).toLowerCase();
-  return ['dashboard', 'claim', 'mobile', 'orthanc', 'users', 'system'].indexOf(view) >= 0 ? view : 'dashboard';
+  return ['dashboard', 'claim', 'mobile', 'orthanc', 'whatsapp', 'users', 'system'].indexOf(view) >= 0 ? view : 'dashboard';
 }
 
 function sanitizeMobileToken_(token) {
@@ -95,6 +95,9 @@ function buildAppBootstrap_(user) {
   var orthancEnabled = Object.prototype.hasOwnProperty.call(settingValues, 'ENABLE_ORTHANC_BRIDGE')
     ? normalizeBoolean_(settingValues.ENABLE_ORTHANC_BRIDGE)
     : false;
+  var whatsappEnabled = Object.prototype.hasOwnProperty.call(settingValues, 'ENABLE_WHATSAPP_DELIVERY')
+    ? normalizeBoolean_(settingValues.ENABLE_WHATSAPP_DELIVERY)
+    : false;
   return {
     appName: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.APP_NAME),
     appVersion: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.APP_VERSION),
@@ -102,6 +105,7 @@ function buildAppBootstrap_(user) {
     mustChangePassword: Boolean(user._mustChangePassword),
     features: {
       mobile_qr_upload: mobileQrEnabled,
+      whatsapp_delivery: whatsappEnabled,
       orthanc_bridge: orthancEnabled &&
         Boolean(normalizeString_(getScriptProperties_().getProperty(SCRIPT_PROPERTY_KEYS.ORTHANC_BRIDGE_SECRET_HASH)))
     },
@@ -116,6 +120,7 @@ function buildAppBootstrap_(user) {
       can_view_all_claims: user.role === ROLES.ADMIN || Boolean(user.can_view_all_claims),
       can_generate_pdf: user.role === ROLES.ADMIN || Boolean(user.can_generate_pdf),
       can_download_pdf: user.role === ROLES.ADMIN || Boolean(user.can_download_pdf),
+      can_send_whatsapp: user.role === ROLES.ADMIN || Boolean(user.can_send_whatsapp),
       can_manage_users: user.role === ROLES.ADMIN
     }
   };

@@ -206,13 +206,29 @@ const editResult = updateSandbox.updateClaim('staff-session', {
   examination_date: '2026-10-03',
   facility_id: 'FAC-1'
 });
-assert.strictEqual(editResult.success, true, JSON.stringify(editResult));
-assert.strictEqual(editResult.data.status, 'COLLECTING_DOCUMENTS');
-assert.strictEqual(editResult.data.completed_at, '');
-assert.strictEqual(editResult.data.doctor_name, 'dr. Test');
-assert.strictEqual(editChanges.status, 'COLLECTING_DOCUMENTS');
-assert.deepStrictEqual(editAuditActions.map((entry) => entry.action), ['CLAIM_UPDATED', 'CLAIM_REOPENED']);
-assert.strictEqual(editAuditActions[1].details.reason, 'CLAIM_DATA_EDITED');
+assert.strictEqual(editResult.success, false, JSON.stringify(editResult));
+assert.strictEqual(editResult.code, 'CLAIM_REOPEN_REQUIRED');
+assert.match(editResult.message, /Buka kembali klaim/);
+assert.strictEqual(editChanges, null);
+assert.deepStrictEqual(editAuditActions, []);
+
+completedClaimForEdit.status = 'COLLECTING_DOCUMENTS';
+completedClaimForEdit.completed_at = '';
+const editAfterReopenResult = updateSandbox.updateClaim('staff-session', {
+  claim_id: completedClaimForEdit.claim_id,
+  patient_name: 'Pasien Test',
+  patient_nik: '1234567890123456',
+  patient_phone: '081234567890',
+  doctor_name: 'dr. Test',
+  patient_birth_date: '1990-01-01',
+  examination_date: '2026-10-03',
+  facility_id: 'FAC-1'
+});
+assert.strictEqual(editAfterReopenResult.success, true, JSON.stringify(editAfterReopenResult));
+assert.strictEqual(editAfterReopenResult.data.status, 'COLLECTING_DOCUMENTS');
+assert.strictEqual(editAfterReopenResult.data.doctor_name, 'dr. Test');
+assert.strictEqual(Object.prototype.hasOwnProperty.call(editChanges, 'status'), false);
+assert.deepStrictEqual(editAuditActions.map((entry) => entry.action), ['CLAIM_UPDATED']);
 
 const claim = {
   _rowNumber: 7,
@@ -282,4 +298,4 @@ assert.strictEqual(updatedChanges.status, 'COLLECTING_DOCUMENTS');
 assert.strictEqual(updatedChanges.updated_by, 'staff@example.test');
 assert.strictEqual(auditAction, 'CLAIM_REOPENED');
 
-console.log('Claim doctor validation and staff completed-claim reopening checks passed.');
+console.log('Completed-claim lock, explicit reopening, and doctor validation checks passed.');

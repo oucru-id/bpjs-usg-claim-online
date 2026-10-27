@@ -1,12 +1,12 @@
 # Panduan OrthancBridge
 
-OrthancBridge adalah program pendamping pada PC Puskesmas. Program ini hanya membuat koneksi keluar dari PC ke deployment HTTPS Apps Script. Jangan membuka port Orthanc `8042` ke internet.
+OrthancBridge adalah program pendamping pada PC Puskesmas. Program ini hanya membuat koneksi keluar dari PC ke deployment HTTPS Apps Script dan/atau bucket GCS privat. Jangan membuka port Orthanc `8042` ke internet.
 
 ## Alur kerja
 
 1. Alat USG mengirim DICOM ke Orthanc.
 2. OrthancBridge mencari studi terbaru yang sudah stabil.
-3. Metadata pasien dibaca dari tag DICOM. `PatientID` dan `PatientComments` diperiksa bersama untuk menemukan NIK 16 digit dan nama dokter, preview gambar dikonversi menjadi JPEG, dan setiap instance DICOM asli diunggah secara resumable ke Drive privat.
+3. Metadata pasien dibaca dari tag DICOM. `PatientID`, `AccessionNumber`, dan `PatientComments` diperiksa bersama untuk menemukan NIK, nomor telepon, dan nama dokter dengan peringatan konflik; preview gambar dikonversi menjadi JPEG, dan setiap instance DICOM asli dapat dikirim ke Drive privat serta GCS privat melalui kanal terpisah.
 4. Data masuk ke **Kotak Masuk Orthanc** pada web app; setiap DICOM asli langsung disalin ke subfolder `DICOM RAW` pada Drive cadangan tanpa menunggu klaim dikonfirmasi.
 5. Petugas meninjau nama pasien, NIK, mengisi No. HP, memeriksa atau mengoreksi Nama Dokter, lalu memeriksa tanggal lahir, tanggal pemeriksaan, dan gambar. Thumbnail dapat diklik untuk membuka gambar berukuran lebih besar tanpa mengubah pilihan gambar.
 6. Setelah konfirmasi, aplikasi membuat klaim dengan status **Mengumpulkan berkas**, menyalin gambar USG, dan memindahkan salinan DICOM asli ke subfolder privat `DICOM` milik klaim.
@@ -20,7 +20,7 @@ Bridge tidak langsung membuat klaim. Konfirmasi petugas wajib karena `PatientID`
 2. Jalankan `setupApplication()` sebagai administrator pemasang.
 3. Pastikan hasil setup memuat sheet `ORTHANC_INBOX` dan `ORTHANC_IMAGES`.
 4. Buat deployment web app versi baru.
-5. Muat ulang URL `/exec` dan pastikan versi `6.10.1-verifier-readable-filenames` tampil.
+5. Muat ulang URL `/exec` dan pastikan versi `7.1.0-whatsapp-console` tampil.
 
 Setup menambahkan kolom metadata `patient_comments`, `doctor_name_candidate`, dan `metadata_warning` pada `ORTHANC_INBOX` secara aman, selain memastikan seluruh sheet/folder Orthanc tersedia. Setup tidak menghapus klaim atau dokumen lama. Karena versi aplikasi berubah, sesi lama dicabut satu kali dan pengguna perlu masuk kembali.
 
@@ -105,6 +105,11 @@ Konfigurasi baru berikut bersifat opsional karena mempunyai nilai bawaan. Tambah
 ```json
 {
   "poll_seconds": 600,
+  "upload_to_google_drive": true,
+  "upload_to_gcs": false,
+  "gcs_bucket": "NAMA_BUCKET_TANPA_GS_PREFIX",
+  "gcs_credentials_file": "gcs-service-account.json",
+  "gcs_prefix": "bpjs-usg",
   "upload_original_dicoms": true,
   "max_dicom_instances_per_study": 100
 }
@@ -112,22 +117,24 @@ Konfigurasi baru berikut bersifat opsional karena mempunyai nilai bawaan. Tambah
 
 Nilai `poll_seconds: 600` berarti OrthancBridge memeriksa studi baru setiap 10 menit.
 
-Bridge mengambil `/instances/{id}/file` dari Orthanc dan mengirim byte DICOM asli langsung ke sesi unggah Google Drive. DICOM tidak dimasukkan ke log dan tidak dikonversi sebelum disimpan. Jangan mematikan `upload_original_dicoms` kecuali untuk pemulihan masalah sementara.
+Bridge mengambil `/instances/{id}/file` dari Orthanc. Untuk web app/Drive, byte DICOM asli dikirim langsung ke sesi unggah Google Drive. Untuk GCS, DICOM asli dan JPEG hasil konversi disimpan dengan nama anonim berbasis hash. DICOM tidak dimasukkan ke log. Jangan mematikan `upload_original_dicoms` kecuali untuk pemulihan masalah sementara pada kanal Drive.
+
+`upload_to_google_drive=false` menghentikan seluruh pengiriman Orthanc ke web app sehingga studi tidak muncul di Kotak Masuk Orthanc. `upload_to_gcs` tidak bergantung pada kanal tersebut. `upload_metadata_to_bigquery=true` menambahkan registri metadata setelah objek GCS lengkap; kegagalan registri tidak membatalkan kanal lain. `trigger_whatsapp_webhook=true` baru memicu n8n setelah GCS dan BigQuery berhasil serta metadata layak dikirim. Trigger otomatis membaca identitas dari BigQuery dan memilih hanya foto pertama; foto lain tetap dapat dipilih manual di web app. Konfigurasi lengkap ada di [GCS_DUAL_DELIVERY.md](GCS_DUAL_DELIVERY.md) dan [BIGQUERY_DICOM_REGISTRY.md](BIGQUERY_DICOM_REGISTRY.md).
 
 ## Pemetaan metadata
 
 | Tag DICOM | Isian web app | Aturan |
 |---|---|---|
 | `PatientName` | Nama pasien | Tanda `^` diubah menjadi spasi; petugas wajib memeriksa |
-| `PatientID` dan `PatientComments` | Calon NIK | Keduanya diperiksa; diisi otomatis hanya jika ditemukan tepat satu nilai yang menghasilkan 16 angka |
-| `PatientID` dan `PatientComments` | Calon nama dokter | Teks non-NIK digunakan sebagai kandidat; duplikat yang sama digabung dan nilai berbeda tidak dipilih otomatis |
-| Tidak tersedia | No. HP | Wajib diisi dan diperiksa manual oleh petugas |
+| `PatientID`, `PatientComments`, dan `AccessionNumber` | Calon NIK | Posisi field tidak menentukan arti; dipilih hanya jika ditemukan tepat satu rangkaian 16 digit yang unik |
+| `PatientID`, `PatientComments`, dan `AccessionNumber` | Calon No. HP | Nomor `08...` atau `628...` diekstrak dari teks campuran lalu dinormalisasi ke `08...` dan `+628...` |
+| `PatientID`, `PatientComments`, dan `AccessionNumber` | Calon nama dokter | Pada field campuran wajib diawali `dr`, `dr.`, atau `dokter`; satu field boleh sekaligus memuat dokter dan nomor HP |
 | `PatientBirthDate` | Tanggal lahir | Jika kosong/tidak valid harus diisi petugas |
 | `StudyDate` | Tanggal pemeriksaan USG | Jika kosong/tidak valid harus diisi petugas |
 | `StudyInstanceUID` | Identitas pemeriksaan | Digunakan untuk mencegah studi yang sama diimpor dua kali |
 | `SOPInstanceUID` | Identitas gambar | Disimpan untuk ketertelusuran |
 
-Jika dua NIK berbeda atau dua nama dokter berbeda ditemukan, aplikasi mengosongkan kandidat yang bertentangan dan menampilkan peringatan. Nama pasien, NIK, dan gambar tetap wajib diperiksa oleh petugas sebelum klaim dibuat. Nama dokter yang terdeteksi disimpan sebagai metadata sumber pada `ORTHANC_INBOX`; versi ini belum menambahkannya sebagai kolom data klaim atau pada PDF klaim.
+Jika dua NIK, dua nomor HP, atau dua nama dokter berbeda ditemukan, aplikasi mengosongkan kandidat yang bertentangan dan menampilkan peringatan. Nama pasien, NIK, nomor HP, dokter, dan gambar tetap wajib diperiksa oleh petugas sebelum klaim dibuat. Nama dokter yang terdeteksi disimpan sebagai metadata sumber pada `ORTHANC_INBOX`; versi ini belum menambahkannya sebagai kolom data klaim atau pada PDF klaim.
 
 ## Gambar dan cine
 

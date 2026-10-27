@@ -1,6 +1,7 @@
-var VERIFIER_FOLDER_NAMES = Object.freeze({
-  CLAIMS: 'KLAIM'
-});
+var VERIFIER_MONTH_NAMES = Object.freeze([
+  'JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI',
+  'JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER'
+]);
 
 function verifierDriveDeliveryEnabled_() {
   return getBooleanSetting_('ENABLE_VERIFIER_DRIVE_DELIVERY', false);
@@ -26,13 +27,43 @@ function assertVerifierDriveIsDistinct_(folder) {
     'Folder Drive verifikator harus berbeda dari folder Drive cadangan.');
 }
 
-function getVerifierDriveClaimsFolder_() {
+function verifierClaimPdfFilename_(claim) {
+  var facility = findRecord_('FACILITIES', 'facility_id', claim.facility_id);
+  var facilityName = facility ? normalizeString_(facility.facility_name) : normalizeString_(claim.facility_id);
+  var facilitySegment = backupFilenameSegment_(facilityName, claim.facility_id).toUpperCase()
+    .replace(/^(PUSKESMAS|PKM)_+/, '');
+  var examinationDate = claimDateKey_(claim.examination_date).replace(/-/g, '');
+  var patientName = backupFilenameSegment_(claim.patient_name, 'TIDAK_DIKETAHUI').toUpperCase();
+  var nik = normalizeString_(claim.patient_nik).replace(/\D/g, '');
+  var doctorName = normalizeString_(claim.doctor_name).replace(/^(DR|DOKTER)\.?\s*/i, '');
+  var doctorSegment = backupFilenameSegment_(doctorName, 'TIDAK_DIKETAHUI').toUpperCase();
+  assert_(facilitySegment, 'VERIFIER_FACILITY_MISSING', 'Nama Puskesmas untuk file verifikator belum tersedia.');
+  assert_(/^\d{8}$/.test(examinationDate), 'VERIFIER_DATE_INVALID',
+    'Tanggal pemeriksaan untuk file verifikator tidak valid.');
+  assert_(/^\d{16}$/.test(nik), 'VERIFIER_NIK_INVALID', 'NIK untuk file verifikator tidak valid.');
+  return 'KLAIM_USG_PKM_' + facilitySegment + '_' + examinationDate + '_' + patientName + '_' + nik +
+    '_DR_' + doctorSegment + '.pdf';
+}
+
+function verifierMonthFolderName_(claim) {
+  var dateKey = claimDateKey_(claim.examination_date);
+  assert_(/^\d{4}-\d{2}-\d{2}$/.test(dateKey), 'VERIFIER_DATE_INVALID',
+    'Tanggal pemeriksaan untuk folder verifikator tidak valid.');
+  var year = dateKey.substring(0, 4);
+  var monthIndex = Number(dateKey.substring(5, 7)) - 1;
+  assert_(monthIndex >= 0 && monthIndex < VERIFIER_MONTH_NAMES.length, 'VERIFIER_DATE_INVALID',
+    'Bulan pemeriksaan untuk folder verifikator tidak valid.');
+  return VERIFIER_MONTH_NAMES[monthIndex] + ' ' + year;
+}
+
+function getVerifierDriveMonthFolder_(claim) {
   var root = getVerifierDriveRoot_();
   assertVerifierDriveIsDistinct_(root);
-  var matches = root.getFoldersByName(VERIFIER_FOLDER_NAMES.CLAIMS);
-  var folder = matches.hasNext() ? matches.next() : root.createFolder(VERIFIER_FOLDER_NAMES.CLAIMS);
-  assert_(!matches.hasNext(), 'VERIFIER_FOLDER_AMBIGUOUS',
-    'Lebih dari satu subfolder verifikator bernama ' + VERIFIER_FOLDER_NAMES.CLAIMS + ' ditemukan.');
+  var folderName = verifierMonthFolderName_(claim);
+  var matches = root.getFoldersByName(folderName);
+  var folder = matches.hasNext() ? matches.next() : root.createFolder(folderName);
+  assert_(!matches.hasNext(), 'VERIFIER_MONTH_FOLDER_AMBIGUOUS',
+    'Lebih dari satu folder verifikator bernama ' + folderName + ' ditemukan.');
   return folder;
 }
 
@@ -64,24 +95,10 @@ function deliverClaimPdfToVerifierSafely_(claim, sourceFile) {
   try {
     assert_(sourceFile && !sourceFile.isTrashed(), 'VERIFIER_PDF_SOURCE_MISSING',
       'PDF utama tidak tersedia untuk dikirim ke Drive verifikator.');
-    var version = Math.max(1, Number(claim.pdf_version) || 1);
-    logicalFilename = claimPdfFilename_(claim, version);
+    logicalFilename = verifierClaimPdfFilename_(claim);
     storedFilename = logicalFilename;
     var previousFile = accessibleDriveFile_(claim.verifier_pdf_file_id);
-    if (previousFile && previousFile.getName() === storedFilename &&
-        Number(previousFile.getSize()) === Number(sourceFile.getSize())) {
-      withScriptLock_(function () {
-        var current = findRecord_('CLAIMS', 'claim_id', claim.claim_id);
-        if (current) updateRecord_('CLAIMS', current._rowNumber, {
-          verifier_pdf_filename: logicalFilename,
-          verifier_pdf_storage_filename: storedFilename,
-          verifier_pdf_url: previousFile.getUrl(),
-          verifier_pdf_status: 'READY', verifier_pdf_error: '', verifier_pdf_at: now_()
-        });
-      });
-      return { status: 'READY', filename: logicalFilename, storageFilename: storedFilename, duplicate: true };
-    }
-    verifierFile = sourceFile.makeCopy(storedFilename, getVerifierDriveClaimsFolder_());
+    verifierFile = sourceFile.makeCopy(storedFilename, getVerifierDriveMonthFolder_(claim));
     withScriptLock_(function () {
       var current = findRecord_('CLAIMS', 'claim_id', claim.claim_id);
       assert_(current, 'CLAIM_NOT_FOUND', 'Klaim tidak ditemukan saat menyimpan status pengiriman verifikator.');
@@ -95,6 +112,10 @@ function deliverClaimPdfToVerifierSafely_(claim, sourceFile) {
         verifier_pdf_error: ''
       });
     });
+    if (previousFile && previousFile.getId() !== verifierFile.getId() &&
+        previousFile.getId() !== sourceFile.getId()) {
+      trashDriveFile_(previousFile);
+    }
     return { status: 'READY', filename: logicalFilename, storageFilename: storedFilename };
   } catch (error) {
     trashDriveFile_(verifierFile);
@@ -111,10 +132,9 @@ function validateVerifierDriveConfiguration() {
     'Konfigurasi Drive verifikator hanya boleh divalidasi oleh administrator pemasang.');
   var root = getVerifierDriveRoot_();
   assertVerifierDriveIsDistinct_(root);
-  var claimsFolder = getVerifierDriveClaimsFolder_();
   var probe = null;
   try {
-    probe = claimsFolder.createFile('VALIDASI_AKSES.txt', 'Validasi akses tulis aplikasi BPJS USG.');
+    probe = root.createFile('VALIDASI_AKSES.txt', 'Validasi akses tulis aplikasi BPJS USG.');
     assert_(probe && probe.getId(), 'VERIFIER_FOLDER_NOT_WRITABLE',
       'Folder Drive verifikator tidak dapat ditulisi oleh akun deployment.');
   } finally {
@@ -128,27 +148,38 @@ function validateVerifierDriveConfiguration() {
   return { success: true, folderId: root.getId(), folderName: root.getName(), enabled: true };
 }
 
-function renameExistingVerifierPdfFiles() {
+function organizeExistingVerifierPdfFiles() {
   var activeUser = normalizeEmail_(Session.getActiveUser().getEmail());
   var adminEmail = normalizeEmail_(getRequiredProperty_(SCRIPT_PROPERTY_KEYS.ADMIN_EMAIL));
   assert_(activeUser && activeUser === adminEmail, 'VERIFIER_RENAME_DENIED',
-    'Penggantian nama PDF verifikator hanya boleh dijalankan oleh administrator pemasang.');
+    'Penataan PDF verifikator hanya boleh dijalankan oleh administrator pemasang.');
   assert_(verifierDriveDeliveryEnabled_(), 'VERIFIER_DELIVERY_DISABLED',
     'Pengiriman ke Drive verifikator belum diaktifkan.');
-  var result = { success: true, checked: 0, renamed: 0, ready: 0, errors: 0 };
-  readAllRecords_('CLAIMS').filter(function (claim) {
+  var result = { success: true, checked: 0, renamed: 0, organized: 0, ready: 0, errors: 0, hasMore: false };
+  var claims = readAllRecords_('CLAIMS').filter(function (claim) {
     return normalizeString_(claim.verifier_pdf_file_id);
-  }).slice(0, 100).forEach(function (claim) {
-    result.checked += 1;
+  });
+  for (var index = 0; index < claims.length; index += 1) {
+    var claim = claims[index];
+    if (result.checked >= 100) {
+      result.hasMore = true;
+      break;
+    }
+    var counted = false;
     try {
       var file = accessibleDriveFile_(claim.verifier_pdf_file_id);
       assert_(file, 'VERIFIER_PDF_NOT_FOUND', 'PDF verifikator tidak dapat dibuka.');
-      var version = Math.max(1, Number(claim.pdf_version) || 1);
-      var readableFilename = claimPdfFilename_(claim, version);
+      var readableFilename = verifierClaimPdfFilename_(claim);
+      var monthFolder = getVerifierDriveMonthFolder_(claim);
+      if (file.getName() === readableFilename && verifierFileIsInFolder_(file, monthFolder)) continue;
+      result.checked += 1;
+      counted = true;
       if (file.getName() !== readableFilename) {
         file.setName(readableFilename);
         result.renamed += 1;
       }
+      file.moveTo(monthFolder);
+      result.organized += 1;
       updateRecord_('CLAIMS', claim._rowNumber, {
         verifier_pdf_filename: readableFilename,
         verifier_pdf_storage_filename: readableFilename,
@@ -158,9 +189,22 @@ function renameExistingVerifierPdfFiles() {
       });
       result.ready += 1;
     } catch (error) {
+      if (!counted) result.checked += 1;
       result.errors += 1;
       recordVerifierDeliveryErrorSafely_(claim.claim_id, verifierDeliveryErrorMessage_(error));
     }
-  });
+  }
   return result;
+}
+
+function verifierFileIsInFolder_(file, folder) {
+  var parents = file.getParents();
+  while (parents.hasNext()) {
+    if (parents.next().getId() === folder.getId()) return true;
+  }
+  return false;
+}
+
+function renameExistingVerifierPdfFiles() {
+  return organizeExistingVerifierPdfFiles();
 }

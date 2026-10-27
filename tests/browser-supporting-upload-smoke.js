@@ -139,6 +139,25 @@ const edgeCandidates = [
 const edgePath = edgeCandidates.find((candidate) => fs.existsSync(candidate));
 assert(edgePath, 'Microsoft Edge was not found. Set EDGE_PATH to run the browser smoke test.');
 
+function waitForBrowser(child, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (child.stdout) child.stdout.destroy();
+      if (child.stderr) child.stderr.destroy();
+      child.kill('SIGKILL');
+      reject(new Error(`Microsoft Edge did not finish within ${timeoutMs / 1000} seconds.`));
+    }, timeoutMs);
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+}
+
 async function main() {
   const server = http.createServer((request, response) => {
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -157,7 +176,7 @@ async function main() {
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
-    const exitCode = await new Promise((resolve) => child.on('close', resolve));
+    const exitCode = await waitForBrowser(child, 60000);
     assert.strictEqual(exitCode, 0, `Edge exited with ${exitCode}: ${stderr}`);
     const resultMatch = stdout.match(/<div id="browser-supporting-upload-result">([^<]+)<\/div>/);
     assert(resultMatch, 'Browser result marker was not found in the rendered DOM.');
@@ -165,7 +184,7 @@ async function main() {
     console.log('Supporting PDF/photo picker and PDF-page processing passed in Microsoft Edge (headless).');
   } finally {
     server.close();
-    fs.rmSync(profilePath, { recursive: true, force: true });
+    fs.rmSync(profilePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 }
 

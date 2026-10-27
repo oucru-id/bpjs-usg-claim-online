@@ -5,7 +5,7 @@ $requiredFiles = @(
   'appsscript.json', 'Main.gs', 'Config.gs', 'AuthService.gs',
   'SheetRepository.gs', 'UserService.gs', 'AuditService.gs',
   'SetupService.gs', 'SystemService.gs', 'TestService.gs', 'PasswordAuthService.gs',
-  'ClaimService.gs', 'DocumentService.gs', 'PdfService.gs', 'TokenService.gs', 'DriveService.gs', 'BackupService.gs', 'OrthancBridgeService.gs',
+  'ClaimService.gs', 'DocumentService.gs', 'PdfService.gs', 'TokenService.gs', 'DriveService.gs', 'BackupService.gs', 'VerifierDriveService.gs', 'GcsService.gs', 'WhatsAppService.gs', 'OrthancBridgeService.gs',
   'Utils.gs', 'Index.html', 'AccessDenied.html', 'Styles.html', 'Scripts.html',
   'Components.html', 'VendorQrCode.html'
 )
@@ -20,6 +20,8 @@ foreach ($file in $requiredFiles) {
 $allSource = Get-ChildItem -LiteralPath $sourceRoot -File | Get-Content -Raw
 $sourceText = $allSource -join "`n"
 $bridgeSourceText = Get-Content -LiteralPath (Join-Path $projectRoot 'orthanc-bridge\bridge.py') -Raw
+$registrySourceText = Get-Content -LiteralPath (Join-Path $projectRoot 'orthanc-bridge\bigquery_registry.py') -Raw
+$bigQuerySchemaText = Get-Content -LiteralPath (Join-Path $projectRoot 'orthanc-bridge\bigquery_schema.sql') -Raw
 $functionMatches = [regex]::Matches($sourceText, '(?m)^function\s+([A-Za-z0-9_]+)\s*\(')
 $duplicates = $functionMatches | ForEach-Object { $_.Groups[1].Value } | Group-Object | Where-Object Count -gt 1
 foreach ($duplicate in $duplicates) {
@@ -108,6 +110,9 @@ foreach ($requiredPasswordFeature in @(
   "DEFAULT_INITIAL_PASSWORD: 'admin123'",
   "'must_change_password'",
   'function changeOwnPassword',
+  'function resetAdminPassword',
+  'ADMIN_PASSWORD_RESET_DENIED',
+  'ADMIN_PASSWORD_RESET',
   'must_change_password: true',
   'must_change_password: false',
   'PASSWORD_CHANGE_REQUIRED'
@@ -155,7 +160,7 @@ foreach ($requiredPdfFeature in @(
 }
 $pdfSource = Get-Content -LiteralPath (Join-Path $sourceRoot 'PdfService.gs') -Raw
 foreach ($requiredPdfLayoutFeature in @(
-  "APP_VERSION: '6.10.1-verifier-readable-filenames'",
+  "APP_VERSION: '7.2.0-whatsapp-photo-selection'",
   "['PDF_USG_IMAGES_PER_PAGE', '1'",
   'var PDF_LAYOUT = Object.freeze',
   "body.appendParagraph('KLAIM USG BPJS')",
@@ -294,6 +299,11 @@ foreach ($requiredBackupFeature in @(
   "['ENABLE_VERIFIER_DRIVE_DELIVERY', 'false'",
   'function deliverClaimPdfToVerifierSafely_',
   'function validateVerifierDriveConfiguration',
+  'function verifierClaimPdfFilename_',
+  'function verifierMonthFolderName_',
+  'function getVerifierDriveMonthFolder_',
+  'function verifierFileIsInFolder_',
+  'function organizeExistingVerifierPdfFiles',
   'function renameExistingVerifierPdfFiles',
   'verifier_pdf_file_id',
   'verifier_pdf_status',
@@ -323,6 +333,72 @@ foreach ($requiredBackupFeature in @(
   if (-not $sourceText.Contains($requiredBackupFeature)) {
     $failures.Add("Secondary Drive backup flow missing: $requiredBackupFeature")
   }
+}
+foreach ($requiredGcsFeature in @(
+  'GCS_BUCKET_NAME',
+  'GCS_OBJECT_PREFIX',
+  'GCS_SERVICE_ACCOUNT_KEY',
+  "['ENABLE_GCS_PDF_DELIVERY', 'false'",
+  'function gcsPdfDeliveryEnabled_',
+  'function deliverClaimPdfToGcsSafely_',
+  'function validateGcsConfiguration',
+  'function retryFailedGcsPdfDeliveries',
+  'ifGenerationMatch=0',
+  'gcs_pdf_bucket',
+  'gcs_pdf_object',
+  'gcs_pdf_generation',
+  'gcs_pdf_status',
+  'gcs_status: gcsResult.status',
+  'PDF disimpan ke Google Cloud Storage.',
+  'upload_to_google_drive',
+  'upload_to_gcs',
+  'gcs_credentials_file',
+  'def gcs_dicom_object_name',
+  'def gcs_jpeg_object_name'
+)) {
+  if (-not ($sourceText + "`n" + $bridgeSourceText).Contains($requiredGcsFeature)) {
+    $failures.Add("GCS dual-delivery flow missing: $requiredGcsFeature")
+  }
+}
+foreach ($requiredWhatsappFeature in @(
+  'ENABLE_WHATSAPP_DELIVERY',
+  'can_send_whatsapp',
+  'function listWhatsAppPatients',
+  'function getWhatsAppImagePreview',
+  'function sendWhatsAppImages',
+  'function setWhatsAppDeliveryEnabled',
+  "requirePermission('can_send_whatsapp', sessionToken)",
+  'WHATSAPP_WEBHOOK_URL',
+  'WHATSAPP_WEBHOOK_API_KEY',
+  'delivery_reference_id',
+  'selected_object_keys',
+  'function whatsappSelectedImages_',
+  "request_source: 'WEB_APP_MANUAL'",
+  'whatsapp-nav-button',
+  'view-whatsapp',
+  'Pilih Foto'
+)) {
+  if (-not $sourceText.Contains($requiredWhatsappFeature)) {
+    $failures.Add("WhatsApp console flow missing: $requiredWhatsappFeature")
+  }
+}
+foreach ($requiredAutomaticWhatsappFeature in @(
+  'def get_auto_whatsapp_candidate',
+  'def acquire_auto_whatsapp_delivery',
+  'image_count=1',
+  "request_source='ORTHANC_BRIDGE_AUTO'",
+  'selected_object_keys=[@object_key]',
+  'image_position=1',
+  'v_whatsapp_delivery_reference',
+  'CREATE OR REPLACE VIEW',
+  "r'^\+628[0-9]{8,11}$'"
+)) {
+  if (-not ($bridgeSourceText + "`n" + $registrySourceText + "`n" + $bigQuerySchemaText).Contains($requiredAutomaticWhatsappFeature)) {
+    $failures.Add("Automatic single-photo WhatsApp flow missing: $requiredAutomaticWhatsappFeature")
+  }
+}
+if ($sourceText.Contains('function getVerifierDriveClaimsFolder_')) {
+  $failures.Add('Verifier delivery must create month folders directly below the configured parent folder.')
 }
 if ($clientSource.Contains("document.getElementById('claim-detail-nik').textContent = claim.patient_nik_masked;")) {
   $failures.Add('Authorized claim detail still masks the NIK.')
@@ -413,9 +489,11 @@ if (-not $clientSource.Contains("preparation.status !== 'COMPLETED'")) {
 foreach ($requiredClaimEditReopenFeature in @(
   'CLAIM_STATUSES.PDF_GENERATED,',
   'CLAIM_STATUSES.COMPLETED',
+  'CLAIM_REOPEN_REQUIRED',
+  'Klaim sudah selesai. Buka kembali klaim sebelum mengubah data.',
   'changes.status = CLAIM_STATUSES.COLLECTING_DOCUMENTS',
   "reason: 'CLAIM_DATA_EDITED'",
-  "var editable = claim.status !== 'ARCHIVED'",
+  "var editable = ['ARCHIVED', 'COMPLETED'].indexOf(claim.status) < 0",
   'Menyimpan perubahan akan membuka kembali klaim ini.'
 )) {
   if (-not $sourceText.Contains($requiredClaimEditReopenFeature)) {

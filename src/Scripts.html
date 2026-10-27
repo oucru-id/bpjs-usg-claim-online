@@ -45,6 +45,8 @@
       orthancInbox: [],
       currentOrthanc: null,
       orthancBridgeStatus: null,
+      whatsappDeliveryStatus: null,
+      whatsappStudies: [],
       mobileContext: null,
       mobileUploadUrl: '',
       sessionToken: readStoredSessionToken()
@@ -191,7 +193,11 @@
       if (view === 'users') loadUsers();
       if (view === 'dashboard') loadClaims();
       if (view === 'orthanc') loadOrthancInbox();
-      if (view === 'system') loadOrthancBridgeStatus();
+      if (view === 'whatsapp') loadWhatsAppStudies();
+      if (view === 'system') {
+        loadOrthancBridgeStatus();
+        loadWhatsAppDeliveryStatus();
+      }
     }
 
     function initialize(bootstrap) {
@@ -206,6 +212,9 @@
       document.getElementById('new-claim-button').classList.toggle('hidden', !bootstrap.user.can_create_claim);
       document.getElementById('orthanc-nav-button').classList.toggle('hidden',
         !bootstrap.user.can_create_claim || !(bootstrap.features && bootstrap.features.orthanc_bridge));
+      var canUseWhatsapp = bootstrap.user.can_send_whatsapp &&
+        bootstrap.features && bootstrap.features.whatsapp_delivery;
+      document.getElementById('whatsapp-nav-button').classList.toggle('hidden', !canUseWhatsapp);
       document.getElementById('optional-qr-upload-card').classList.toggle('hidden',
         !(bootstrap.features && bootstrap.features.mobile_qr_upload));
       if (bootstrap.authMode === 'USERNAME_PASSWORD') document.getElementById('logout-button').classList.remove('hidden');
@@ -215,6 +224,7 @@
         initialView = 'dashboard';
       }
       if (initialView === 'orthanc' && !(bootstrap.features && bootstrap.features.orthanc_bridge)) initialView = 'dashboard';
+      if (initialView === 'whatsapp' && !canUseWhatsapp) initialView = 'dashboard';
       showApplication();
       if (initialView === 'mobile') initializeMobileUpload();
       else if (initialView === 'claim' && initialClaimId) openClaimDetail(initialClaimId);
@@ -548,6 +558,188 @@
       }, button);
     }
 
+    function whatsappStatusLabel(stateValue) {
+      return {
+        NOT_SENT: 'Belum dikirim',
+        PENDING: 'Dalam proses',
+        PARTIAL: 'Sebagian terkirim',
+        SENT: 'Semua terkirim',
+        FAILED: 'Gagal'
+      }[stateValue] || 'Belum diketahui';
+    }
+
+    function whatsappStatusClass(stateValue) {
+      return {
+        NOT_SENT: 'whatsapp-not-sent',
+        PENDING: 'whatsapp-pending',
+        PARTIAL: 'whatsapp-partial',
+        SENT: 'whatsapp-sent',
+        FAILED: 'whatsapp-failed'
+      }[stateValue] || 'off';
+    }
+
+    function loadWhatsAppStudies() {
+      var form = document.getElementById('whatsapp-filter-form');
+      var button = document.getElementById('refresh-whatsapp-button');
+      var loading = document.getElementById('whatsapp-loading');
+      loading.classList.remove('hidden');
+      document.getElementById('whatsapp-empty').classList.add('hidden');
+      callServer('listWhatsAppPatients', [{
+        search: form.elements.search.value,
+        status: form.elements.status.value
+      }], function (data) {
+        loading.classList.add('hidden');
+        state.whatsappStudies = data.items || [];
+        renderWhatsAppSummary(data.summary || {});
+        renderWhatsAppStudies();
+      }, button, function (message, code) {
+        loading.classList.add('hidden');
+        state.whatsappStudies = [];
+        renderWhatsAppSummary({});
+        renderWhatsAppStudies();
+        handleServerError(message, code);
+      });
+    }
+
+    function renderWhatsAppSummary(summary) {
+      var container = document.getElementById('whatsapp-summary');
+      container.textContent = '';
+      [
+        ['Ditampilkan', summary.total || 0],
+        ['Belum dikirim', summary.not_sent || 0],
+        ['Dalam proses', summary.pending || 0],
+        ['Sebagian terkirim', summary.partial || 0],
+        ['Semua terkirim', summary.sent || 0]
+      ].forEach(function (item) {
+        var card = document.createElement('article'); card.className = 'card summary-card';
+        var label = document.createElement('span'); label.className = 'muted'; label.textContent = item[0];
+        var value = document.createElement('strong'); value.textContent = String(item[1]);
+        card.append(label, value); container.appendChild(card);
+      });
+    }
+
+    function renderWhatsAppStudies() {
+      var container = document.getElementById('whatsapp-study-list');
+      container.textContent = '';
+      state.whatsappStudies.forEach(function (study) {
+        var card = document.createElement('article'); card.className = 'card whatsapp-study-card';
+        var header = document.createElement('div'); header.className = 'whatsapp-study-header';
+        var title = document.createElement('div'); title.className = 'whatsapp-study-title';
+        var name = document.createElement('h2'); name.textContent = study.patient_name || 'Nama pasien belum tersedia';
+        var meta = document.createElement('div'); meta.className = 'whatsapp-study-meta';
+        [
+          'NIK: ' + (study.patient_nik || '-'),
+          'WhatsApp: ' + (study.patient_phone || study.patient_phone_e164 || '-'),
+          'Dokter: ' + (study.doctor_name || '-'),
+          'Tanggal USG: ' + formatIndonesianDate(study.study_date),
+          'Foto: ' + String(study.image_count || 0)
+        ].forEach(function (value) { var span = document.createElement('span'); span.textContent = value; meta.appendChild(span); });
+        title.append(name, meta);
+        var badge = document.createElement('span');
+        badge.className = 'status ' + whatsappStatusClass(study.delivery_state);
+        badge.textContent = whatsappStatusLabel(study.delivery_state);
+        header.append(title, badge); card.appendChild(header);
+
+        var selectedObjectKeys = [];
+        var sentObjectKeys = new Set(study.sent_object_keys || []);
+        var pendingObjectKeys = new Set(study.pending_object_keys || []);
+        var images = document.createElement('div'); images.className = 'whatsapp-images';
+        var send;
+        function updateSendSelection() {
+          if (!send) return;
+          var hasPendingRequest = study.delivery_state === 'PENDING';
+          send.disabled = !study.whatsapp_ready || hasPendingRequest || selectedObjectKeys.length === 0;
+          if (!study.whatsapp_ready) send.textContent = 'Data Belum Siap';
+          else if (hasPendingRequest) send.textContent = 'Sedang Diproses';
+          else if (selectedObjectKeys.length) send.textContent = 'Kirim ' + selectedObjectKeys.length + ' Foto Terpilih';
+          else if ((study.sent_object_keys || []).length >= (study.image_count || 0)) send.textContent = 'Semua Foto Terkirim';
+          else send.textContent = 'Pilih Foto';
+        }
+        (study.images || []).forEach(function (item, index) {
+          var option = document.createElement('div'); option.className = 'whatsapp-image-option';
+          var button = document.createElement('button');
+          button.type = 'button'; button.className = 'whatsapp-image-button';
+          button.title = 'Buka foto USG ' + (index + 1);
+          var placeholder = document.createElement('span');
+          placeholder.className = 'whatsapp-image-placeholder'; placeholder.textContent = 'Memuat foto ' + (index + 1) + '...';
+          button.appendChild(placeholder);
+          button.addEventListener('click', function () {
+            openImagePreview('Foto USG ' + (index + 1), 'getWhatsAppImagePreview',
+              [study.study_key, item.object_key], 'Foto USG ' + (index + 1) + ' milik ' + (study.patient_name || 'pasien'));
+          });
+          var selection = document.createElement('label'); selection.className = 'whatsapp-image-select';
+          var checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.value = item.object_key;
+          var selectionText = document.createElement('span');
+          var alreadySent = sentObjectKeys.has(item.object_key);
+          var isPending = pendingObjectKeys.has(item.object_key);
+          checkbox.disabled = alreadySent || isPending || study.delivery_state === 'PENDING' || !study.whatsapp_ready;
+          selectionText.textContent = alreadySent ? 'Foto ' + (index + 1) + ' sudah dikirim'
+            : (isPending ? 'Foto ' + (index + 1) + ' sedang diproses' : 'Pilih foto ' + (index + 1));
+          checkbox.addEventListener('change', function () {
+            selectedObjectKeys = (study.images || []).filter(function (candidate) {
+              return candidate.object_key === item.object_key ? checkbox.checked
+                : selectedObjectKeys.indexOf(candidate.object_key) >= 0;
+            }).map(function (candidate) { return candidate.object_key; });
+            option.classList.toggle('selected', checkbox.checked);
+            updateSendSelection();
+          });
+          selection.append(checkbox, selectionText);
+          option.append(button, selection); images.appendChild(option);
+          callServer('getWhatsAppImagePreview', [study.study_key, item.object_key], function (content) {
+            var image = document.createElement('img');
+            image.alt = 'Foto USG ' + (index + 1) + ' milik ' + (study.patient_name || 'pasien');
+            image.loading = 'lazy';
+            image.src = 'data:' + content.mime_type + ';base64,' + content.base64;
+            button.textContent = ''; button.appendChild(image);
+          }, null, function () { placeholder.textContent = 'Foto tidak dapat dimuat'; });
+        });
+        if (!(study.images || []).length) {
+          var noImage = document.createElement('p'); noImage.className = 'muted'; noImage.textContent = 'Foto JPEG belum tersedia.';
+          images.appendChild(noImage);
+        }
+        card.appendChild(images);
+
+        var footer = document.createElement('div'); footer.className = 'whatsapp-study-footer';
+        var detail = document.createElement('div'); detail.className = 'whatsapp-status-detail';
+        var statusDetail = document.createElement('span'); statusDetail.className = 'muted';
+        if (study.delivery_state === 'SENT') {
+          statusDetail.textContent = 'Semua ' + String(study.image_count || 0) + ' foto sudah dikirim.';
+        } else if (study.delivery_state === 'PARTIAL') {
+          statusDetail.textContent = String((study.sent_object_keys || []).length) + ' dari ' +
+            String(study.image_count || 0) + ' foto sudah dikirim. Pilih foto lain untuk melanjutkan.';
+        } else if (study.delivery_state === 'PENDING') {
+          statusDetail.textContent = 'Permintaan diterima ' + formatIndonesianDateTime(study.requested_at || study.delivery_updated_at);
+        } else if (study.delivery_state === 'FAILED') {
+          statusDetail.textContent = study.last_error || 'Percobaan terakhir gagal. Silakan kirim ulang.';
+        } else if (!study.whatsapp_ready) {
+          statusDetail.textContent = (study.whatsapp_block_reasons || []).join(' ') || 'Data belum siap dikirim.';
+        } else {
+          statusDetail.textContent = 'Belum ada catatan pengiriman.';
+        }
+        detail.appendChild(statusDetail);
+        send = document.createElement('button'); send.type = 'button'; send.className = 'primary';
+        updateSendSelection();
+        send.addEventListener('click', function () { sendWhatsAppStudy(study, selectedObjectKeys.slice(), send); });
+        footer.append(detail, send); card.appendChild(footer); container.appendChild(card);
+      });
+      document.getElementById('whatsapp-empty').classList.toggle('hidden', state.whatsappStudies.length > 0);
+    }
+
+    function sendWhatsAppStudy(study, selectedObjectKeys, button) {
+      if (!selectedObjectKeys.length) {
+        showMessage('Pilih sedikitnya satu foto USG sebelum mengirim.', true);
+        return;
+      }
+      var destination = study.patient_phone || study.patient_phone_e164 || 'nomor pasien';
+      if (!window.confirm('Kirim ' + String(selectedObjectKeys.length) + ' foto USG terpilih dari ' +
+          String(study.image_count || 0) + ' foto milik ' +
+          (study.patient_name || 'pasien') + ' ke WhatsApp ' + destination + '?')) return;
+      callServer('sendWhatsAppImages', [study.study_key, selectedObjectKeys], function () {
+        showMessage('Permintaan pengiriman foto terpilih diterima. Status akan diperbarui setelah layanan WhatsApp memproses foto.', false);
+        loadWhatsAppStudies();
+      }, button);
+    }
+
     function openClaimDetail(claimId) {
       callServer('getClaimDetail', [claimId], function (claim) {
         state.currentClaim = claim;
@@ -576,7 +768,7 @@
       document.getElementById('claim-detail-examination-date').textContent = formatIndonesianDate(claim.examination_date);
       document.getElementById('claim-detail-facility').textContent = claim.facility_name;
       document.getElementById('claim-detail-updated').textContent = formatIndonesianDateTime(claim.updated_at || claim.created_at);
-      var editable = claim.status !== 'ARCHIVED';
+      var editable = ['ARCHIVED', 'COMPLETED'].indexOf(claim.status) < 0;
       document.getElementById('edit-claim-button').classList.toggle('hidden', !editable);
       document.getElementById('start-collection-button').classList.toggle('hidden', claim.status !== 'DRAFT');
       document.getElementById('archive-claim-button').classList.toggle('hidden', state.bootstrap.user.role !== 'ADMIN' || claim.status === 'ARCHIVED');
@@ -630,7 +822,7 @@
       var previousStatus = state.currentClaim && form.elements.claim_id.value
         ? state.currentClaim.status
         : '';
-      if (['READY', 'PDF_GENERATED', 'COMPLETED'].indexOf(previousStatus) >= 0 &&
+      if (['READY', 'PDF_GENERATED'].indexOf(previousStatus) >= 0 &&
           !window.confirm('Menyimpan perubahan akan membuka kembali klaim ini. PDF lama tetap tersimpan sebagai riwayat, tetapi PDF klaim harus dibuat ulang. Lanjutkan?')) {
         return;
       }
@@ -647,7 +839,7 @@
       var endpoint = payload.claim_id ? 'updateClaim' : 'createClaim';
       callServer(endpoint, [payload], function (claim) {
         document.getElementById('claim-dialog').close();
-        var reopenedByEdit = payload.claim_id && ['READY', 'PDF_GENERATED', 'COMPLETED'].indexOf(previousStatus) >= 0;
+        var reopenedByEdit = payload.claim_id && ['READY', 'PDF_GENERATED'].indexOf(previousStatus) >= 0;
         showMessage(reopenedByEdit
           ? 'Data klaim berhasil diperbarui dan klaim dibuka kembali. Buat ulang PDF sebelum menyelesaikan klaim.'
           : (payload.claim_id ? 'Data klaim berhasil diperbarui.' : 'Klaim baru berhasil dibuat.'), false);
@@ -1081,8 +1273,8 @@
         var deliveryError = data.backup && data.backup.status === 'ERROR' ||
           data.verifier && data.verifier.status === 'ERROR';
         showMessage(deliveryError
-          ? 'PDF berhasil dibuat, tetapi satu atau lebih salinan Drive perlu diperiksa.'
-          : 'PDF klaim berhasil dibuat dan tujuan Drive aktif telah diperbarui.', Boolean(deliveryError));
+          ? 'PDF berhasil dibuat, tetapi satu atau lebih tujuan penyimpanan perlu diperiksa.'
+          : 'PDF klaim berhasil dibuat. Periksa hasilnya, lalu selesaikan klaim untuk mengirim PDF ke GCS.', Boolean(deliveryError));
       }, button, function (message, code) {
         progress.classList.add('error');
         progress.textContent = message;
@@ -1150,12 +1342,18 @@
     }
 
     function completeCurrentClaim() {
-      if (!state.currentClaim || !window.confirm('Selesaikan klaim ini? Unggahan dan perubahan berkas akan dikunci.')) return;
+      if (!state.currentClaim || !window.confirm('Selesaikan klaim ini? Edit data, unggahan, dan perubahan berkas akan dikunci sampai klaim dibuka kembali.')) return;
       var button = document.getElementById('complete-claim-button');
-      callServer('completeClaim', [state.currentClaim.claim_id], function (claim) {
-        state.currentClaim = claim;
-        renderClaimDetail(claim);
-        showMessage('Klaim berhasil diselesaikan.', false);
+      callServer('completeClaim', [state.currentClaim.claim_id], function (data) {
+        state.currentClaim = data.claim;
+        renderClaimDetail(data.claim);
+        if (data.gcs && data.gcs.status === 'READY') {
+          showMessage('Klaim berhasil diselesaikan dan PDF disimpan ke Google Cloud Storage.', false);
+        } else if (data.gcs && data.gcs.status === 'ERROR') {
+          showMessage('Klaim berhasil diselesaikan, tetapi pengiriman PDF ke Google Cloud Storage gagal: ' + data.gcs.message, true);
+        } else {
+          showMessage('Klaim berhasil diselesaikan.', false);
+        }
       }, button);
     }
 
@@ -1616,7 +1814,7 @@
     function openUserDialog(user) {
       var form = document.getElementById('user-form');
       form.reset();
-      var value = user || { role: 'STAFF', active: true, can_create_claim: true, can_generate_pdf: true, can_download_pdf: true };
+      var value = user || { role: 'STAFF', active: true, can_create_claim: true, can_generate_pdf: true, can_download_pdf: true, can_send_whatsapp: false };
       ['user_id', 'google_email', 'full_name', 'role'].forEach(function (name) { form.elements[name].value = value[name] || ''; });
       form.elements.google_email.readOnly = Boolean(user);
       form.elements.username.value = value.auth_username || '';
@@ -1628,7 +1826,7 @@
       document.getElementById('password-help').textContent = value.has_password
         ? 'Kosongkan jika tidak ingin reset. Jika diisi, pengguna wajib menggantinya saat login.'
         : 'Kosongkan untuk memakai kata sandi awal admin123. Pengguna wajib menggantinya saat login.';
-      ['active', 'can_create_claim', 'can_view_all_claims', 'can_generate_pdf', 'can_download_pdf'].forEach(function (name) { form.elements[name].checked = Boolean(value[name]); });
+      ['active', 'can_create_claim', 'can_view_all_claims', 'can_generate_pdf', 'can_download_pdf', 'can_send_whatsapp'].forEach(function (name) { form.elements[name].checked = Boolean(value[name]); });
       populateFacilities(value.facility_id);
       document.getElementById('user-dialog-title').textContent = user ? 'Edit Pengguna' : 'Tambah Pengguna';
       document.getElementById('user-dialog').showModal();
@@ -1650,7 +1848,8 @@
         can_create_claim: form.elements.can_create_claim.checked,
         can_view_all_claims: form.elements.can_view_all_claims.checked,
         can_generate_pdf: form.elements.can_generate_pdf.checked,
-        can_download_pdf: form.elements.can_download_pdf.checked
+        can_download_pdf: form.elements.can_download_pdf.checked,
+        can_send_whatsapp: form.elements.can_send_whatsapp.checked
       };
       callServer('saveUserAdmin', [payload], function () {
         document.getElementById('user-dialog').close();
@@ -1703,6 +1902,43 @@
       state.bootstrap.features.orthanc_bridge = ready;
     }
 
+    function loadWhatsAppDeliveryStatus() {
+      if (!state.bootstrap || state.bootstrap.user.role !== 'ADMIN') return;
+      callServer('getWhatsAppDeliveryStatus', [], function (status) {
+        state.whatsappDeliveryStatus = status;
+        renderWhatsAppDeliveryStatus(status);
+      });
+    }
+
+    function renderWhatsAppDeliveryStatus(status) {
+      var badge = document.getElementById('whatsapp-system-badge');
+      var ready = status.enabled && status.configured;
+      badge.className = 'status ' + (ready ? 'ready' : 'off');
+      badge.textContent = ready ? 'Aktif' : (status.configured ? 'Dinonaktifkan' : 'Belum dikonfigurasi');
+      document.getElementById('whatsapp-system-message').textContent = status.configured
+        ? 'BigQuery, GCS, dan properti webhook telah diisi. Aktivasi akan memvalidasi akses live tanpa mengirim foto.'
+        : 'Lengkapi Script Properties WhatsApp, BigQuery, dan GCS terlebih dahulu.';
+      var toggle = document.getElementById('toggle-whatsapp-delivery-button');
+      toggle.textContent = status.enabled ? 'Nonaktifkan WhatsApp' : 'Aktifkan WhatsApp';
+      toggle.disabled = !status.configured && !status.enabled;
+      state.bootstrap.features.whatsapp_delivery = ready;
+      document.getElementById('whatsapp-nav-button').classList.toggle('hidden',
+        !ready || !state.bootstrap.user.can_send_whatsapp);
+    }
+
+    function toggleWhatsAppDelivery() {
+      var status = state.whatsappDeliveryStatus;
+      if (!status) return;
+      var enabled = !status.enabled;
+      if (enabled && !window.confirm('Aktifkan menu dan pengiriman manual WhatsApp? Pastikan workflow n8n menggunakan outbox idempoten dan data uji sudah lulus.')) return;
+      if (!enabled && !window.confirm('Nonaktifkan menu WhatsApp? Status dan riwayat pengiriman tidak akan dihapus.')) return;
+      var button = document.getElementById('toggle-whatsapp-delivery-button');
+      callServer('setWhatsAppDeliveryEnabled', [enabled], function (data) {
+        showMessage(data.enabled ? 'Pengiriman WhatsApp diaktifkan.' : 'Pengiriman WhatsApp dinonaktifkan.', false);
+        loadWhatsAppDeliveryStatus();
+      }, button);
+    }
+
     function rotateOrthancKey() {
       var status = state.orthancBridgeStatus;
       if (status && status.key_configured && !window.confirm('Ganti kunci koneksi? OrthancBridge akan berhenti sampai config.json diperbarui dengan kunci baru.')) return;
@@ -1736,6 +1972,11 @@
         apps_script_url: document.getElementById('orthanc-key-endpoint').value,
         bridge_id: document.getElementById('orthanc-key-bridge-id').value,
         bridge_key: document.getElementById('orthanc-key-value').value,
+        upload_to_google_drive: true,
+        upload_to_gcs: false,
+        gcs_bucket: 'NAMA_BUCKET_TANPA_GS_PREFIX',
+        gcs_credentials_file: 'gcs-service-account.json',
+        gcs_prefix: 'bpjs-usg',
         lookback_days: 2,
         poll_seconds: 600,
         max_images_per_study: 30,
@@ -1823,6 +2064,10 @@
     document.getElementById('new-claim-button').addEventListener('click', function () { openClaimDialog(null); });
     document.getElementById('refresh-orthanc-button').addEventListener('click', loadOrthancInbox);
     document.getElementById('orthanc-include-processed').addEventListener('change', loadOrthancInbox);
+    document.getElementById('refresh-whatsapp-button').addEventListener('click', loadWhatsAppStudies);
+    document.getElementById('whatsapp-filter-form').addEventListener('submit', function (event) { event.preventDefault(); loadWhatsAppStudies(); });
+    document.getElementById('reset-whatsapp-filter').addEventListener('click', function () { document.getElementById('whatsapp-filter-form').reset(); loadWhatsAppStudies(); });
+    document.getElementById('toggle-whatsapp-delivery-button').addEventListener('click', toggleWhatsAppDelivery);
     document.getElementById('orthanc-import-form').addEventListener('submit', importOrthancClaim);
     document.getElementById('reject-orthanc-button').addEventListener('click', rejectCurrentOrthancInbox);
     document.getElementById('close-orthanc-dialog').addEventListener('click', function () { document.getElementById('orthanc-import-dialog').close(); });

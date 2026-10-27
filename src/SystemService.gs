@@ -45,8 +45,22 @@ function runSystemDiagnostics(sessionToken) {
     });
     check('Folder Drive verifikator', function () {
       if (verifierDriveDeliveryEnabled_()) {
-        getVerifierDriveRoot_().getName();
-        getVerifierDriveClaimsFolder_().getName();
+        var verifierRoot = getVerifierDriveRoot_();
+        assertVerifierDriveIsDistinct_(verifierRoot);
+        verifierRoot.getName();
+      }
+    });
+    check('Google Cloud Storage PDF', function () {
+      if (gcsPdfDeliveryEnabled_()) {
+        gcsBucketName_();
+        gcsObjectPrefix_();
+        gcsAccessToken_();
+      }
+    });
+    check('Pengiriman WhatsApp', function () {
+      if (whatsappDeliveryEnabled_()) {
+        whatsappWebhookConfig_();
+        whatsappBigQueryQuery_('SELECT 1 AS ready', []);
       }
     });
     writeAudit_(user, 'SYSTEM_DIAGNOSTICS_RUN', '', '', {
@@ -64,6 +78,8 @@ function runSystemDiagnostics(sessionToken) {
       maxPdfSizeMb: getRequiredProperty_(SCRIPT_PROPERTY_KEYS.MAX_PDF_SIZE_MB),
       secondaryBackupEnabled: secondaryBackupEnabled_(),
       verifierDriveDeliveryEnabled: verifierDriveDeliveryEnabled_(),
+      gcsPdfDeliveryEnabled: gcsPdfDeliveryEnabled_(),
+      whatsappDeliveryEnabled: whatsappDeliveryEnabled_(),
       currentUser: user.google_email,
       checks: results
     });

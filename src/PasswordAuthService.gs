@@ -212,6 +212,76 @@ function changeOwnPassword(sessionToken, newPassword, confirmation) {
   }
 }
 
+function resetAdminPassword() {
+  var callerEmail = normalizeEmail_(Session.getActiveUser().getEmail());
+  var configuredAdminEmail = normalizeEmail_(getRequiredProperty_(SCRIPT_PROPERTY_KEYS.ADMIN_EMAIL));
+  assert_(callerEmail && callerEmail === configuredAdminEmail,
+    'ADMIN_PASSWORD_RESET_DENIED',
+    'Reset kata sandi administrator hanya boleh dijalankan langsung dari editor oleh ADMIN_EMAIL.');
+
+  var recovered = withScriptLock_(function () {
+    var adminRecord = findUserByEmail_(configuredAdminEmail);
+    assert_(adminRecord, 'ADMIN_USER_NOT_FOUND',
+      'Akun administrator tidak ditemukan. Periksa sheet USERS dan ADMIN_EMAIL.');
+    var adminUser = normalizeUserRecord_(adminRecord);
+    assert_(adminUser.active && adminUser.role === ROLES.ADMIN,
+      'ADMIN_USER_INVALID', 'Akun ADMIN_EMAIL harus aktif dan memiliki peran ADMIN.');
+
+    var credential = findRecord_('AUTH_CREDENTIALS', 'user_id', adminUser.user_id);
+    var credentialCreated = !credential;
+    var username = credential
+      ? normalizeUsername_(credential.username)
+      : availableAdminRecoveryUsername_(configuredAdminEmail, adminUser.user_id);
+    assert_(isValidUsername_(username), 'ADMIN_USERNAME_INVALID',
+      'Username administrator tidak dapat dibuat atau dipulihkan.');
+
+    var prepared = prepareCredentialUpdate_(
+      adminUser.user_id,
+      username,
+      PASSWORD_POLICY.DEFAULT_INITIAL_PASSWORD
+    );
+    applyCredentialUpdate_(adminUser.user_id, prepared);
+    return { user: adminUser, username: username, credentialCreated: credentialCreated };
+  });
+
+  writeAudit_(recovered.user, 'ADMIN_PASSWORD_RESET', '', '', {
+    target_user_id: recovered.user.user_id,
+    target_username: recovered.username,
+    credential_created: recovered.credentialCreated,
+    forced_password_change: true,
+    reset_by_google_email: callerEmail
+  });
+  return {
+    success: true,
+    username: recovered.username,
+    credentialCreated: recovered.credentialCreated,
+    mustChangePassword: true,
+    message: recovered.credentialCreated
+      ? 'Kredensial administrator dibuat. Masuk dengan username yang ditampilkan dan kata sandi sementara admin123, lalu segera buat kata sandi baru.'
+      : 'Kata sandi administrator direset ke kata sandi awal. Masuk dengan admin123 lalu segera buat kata sandi baru.'
+  };
+}
+
+function availableAdminRecoveryUsername_(adminEmail, userId) {
+  var localPart = normalizeString_(adminEmail).split('@')[0].toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '.')
+    .replace(/^[._-]+|[._-]+$/g, '');
+  var base = localPart ? 'admin.' + localPart : 'administrator';
+  base = base.slice(0, 60).replace(/[._-]+$/g, '') || 'administrator';
+  var candidates = ['admin', base];
+  for (var suffix = 2; suffix <= 99; suffix += 1) {
+    candidates.push(base.slice(0, 61) + '.' + suffix);
+  }
+  for (var index = 0; index < candidates.length; index += 1) {
+    var candidate = normalizeUsername_(candidates[index]);
+    if (!isValidUsername_(candidate)) continue;
+    var owner = findCredentialByUsername_(candidate);
+    if (!owner || normalizeString_(owner.user_id) === normalizeString_(userId)) return candidate;
+  }
+  throw appError_('ADMIN_USERNAME_UNAVAILABLE',
+    'Tidak dapat membuat username pemulihan administrator yang unik. Periksa AUTH_CREDENTIALS.');
+}
+
 function logoutPasswordSession(sessionToken) {
   try {
     var user = getPasswordSessionUser_(sessionToken);

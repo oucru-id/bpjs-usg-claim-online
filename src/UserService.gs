@@ -155,6 +155,7 @@ function saveUserAdminLocked_(actor, payload) {
     can_view_all_claims: role === ROLES.ADMIN || normalizeBoolean_(payload.can_view_all_claims),
     can_generate_pdf: role === ROLES.ADMIN || normalizeBoolean_(payload.can_generate_pdf),
     can_download_pdf: role === ROLES.ADMIN || normalizeBoolean_(payload.can_download_pdf),
+    can_send_whatsapp: role === ROLES.ADMIN || normalizeBoolean_(payload.can_send_whatsapp),
     can_manage_users: role === ROLES.ADMIN,
     updated_at: timestamp,
     updated_by: actor.google_email

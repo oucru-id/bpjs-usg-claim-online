@@ -1,7 +1,7 @@
 var APP_CONFIG = Object.freeze({
   APP_NAME: 'Sistem Klaim USG BPJS',
   APP_DESCRIPTION: 'Pengelolaan klaim USG, dokumen pendukung, dan data DICOM Orthanc secara terintegrasi.',
-  APP_VERSION: '6.10.1-verifier-readable-filenames',
+  APP_VERSION: '7.2.0-whatsapp-photo-selection',
   AUTH_MODE: 'USERNAME_PASSWORD',
   TIMEZONE: 'Asia/Makassar',
   DATABASE_NAME: 'BPJS_USG_APP_DATABASE',
@@ -22,6 +22,14 @@ var SCRIPT_PROPERTY_KEYS = Object.freeze({
   ORTHANC_BRIDGE_SECRET_HASH: 'ORTHANC_BRIDGE_SECRET_HASH',
   BACKUP_DRIVE_FOLDER_ID: 'BACKUP_DRIVE_FOLDER_ID',
   VERIFIER_DRIVE_FOLDER_ID: 'VERIFIER_DRIVE_FOLDER_ID',
+  GCS_BUCKET_NAME: 'GCS_BUCKET_NAME',
+  GCS_OBJECT_PREFIX: 'GCS_OBJECT_PREFIX',
+  GCS_SERVICE_ACCOUNT_KEY: 'GCS_SERVICE_ACCOUNT_KEY',
+  BIGQUERY_PROJECT_ID: 'BIGQUERY_PROJECT_ID',
+  BIGQUERY_DATASET: 'BIGQUERY_DATASET',
+  BIGQUERY_LOCATION: 'BIGQUERY_LOCATION',
+  WHATSAPP_WEBHOOK_URL: 'WHATSAPP_WEBHOOK_URL',
+  WHATSAPP_WEBHOOK_API_KEY: 'WHATSAPP_WEBHOOK_API_KEY',
   ADMIN_EMAIL: 'ADMIN_EMAIL',
   WORKSPACE_DOMAIN: 'WORKSPACE_DOMAIN',
   APP_NAME: 'APP_NAME',
@@ -45,7 +53,7 @@ var SHEET_SCHEMAS = Object.freeze({
   USERS: [
     'user_id', 'google_email', 'full_name', 'role', 'facility_id', 'active',
     'can_create_claim', 'can_view_all_claims', 'can_generate_pdf',
-    'can_download_pdf', 'can_manage_users', 'created_at', 'created_by',
+    'can_download_pdf', 'can_send_whatsapp', 'can_manage_users', 'created_at', 'created_by',
     'updated_at', 'updated_by'
   ],
   FACILITIES: ['facility_id', 'facility_name', 'active', 'created_at'],
@@ -63,6 +71,8 @@ var SHEET_SCHEMAS = Object.freeze({
     'verifier_pdf_file_id', 'verifier_pdf_filename',
     'verifier_pdf_storage_filename', 'verifier_pdf_url',
     'verifier_pdf_at', 'verifier_pdf_status', 'verifier_pdf_error',
+    'gcs_pdf_bucket', 'gcs_pdf_object', 'gcs_pdf_generation',
+    'gcs_pdf_at', 'gcs_pdf_status', 'gcs_pdf_error',
     'completed_at', 'archived_at'
   ],
   DOCUMENTS: [
@@ -131,6 +141,8 @@ var DEFAULT_SETTINGS = Object.freeze([
   ['ENABLE_ORTHANC_BRIDGE', 'false', 'Aktifkan penerimaan pemeriksaan dari OrthancBridge lokal'],
   ['ENABLE_SECONDARY_DRIVE_BACKUP', 'false', 'Salin seluruh DICOM raw, DICOM terkait klaim, dan PDF klaim ke folder Drive cadangan'],
   ['ENABLE_VERIFIER_DRIVE_DELIVERY', 'false', 'Kirim setiap PDF klaim yang baru dibuat ke folder Drive privat milik verifikator'],
+  ['ENABLE_GCS_PDF_DELIVERY', 'false', 'Kirim PDF klaim ke bucket Google Cloud Storage privat saat klaim diselesaikan'],
+  ['ENABLE_WHATSAPP_DELIVERY', 'false', 'Tampilkan daftar foto USG dan izinkan pengiriman manual melalui webhook WhatsApp privat'],
   ['REQUIRE_USG', 'true', 'Wajib sedikitnya satu gambar USG terpilih'],
   ['REQUIRE_KTP', 'false', 'Wajib KTP sebelum PDF'],
   ['REQUIRE_BUKU_KIA', 'false', 'Wajib Buku KIA sebelum PDF'],
@@ -198,7 +210,7 @@ var PASSWORD_POLICY = Object.freeze({
 
 var PERMISSIONS = Object.freeze([
   'can_create_claim', 'can_view_all_claims', 'can_generate_pdf',
-  'can_download_pdf', 'can_manage_users'
+  'can_download_pdf', 'can_send_whatsapp', 'can_manage_users'
 ]);
 
 function getScriptProperties_() {

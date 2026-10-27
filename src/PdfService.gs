@@ -62,6 +62,12 @@ function generateClaimPdf(sessionToken, payload) {
         final_pdf_url: outputFile.getUrl(),
         final_pdf_generated_at: timestamp,
         final_pdf_generated_by: user.google_email,
+        gcs_pdf_bucket: '',
+        gcs_pdf_object: '',
+        gcs_pdf_generation: '',
+        gcs_pdf_at: '',
+        gcs_pdf_status: gcsPdfDeliveryEnabled_() ? 'WAITING_COMPLETION' : 'DISABLED',
+        gcs_pdf_error: '',
         updated_by: user.google_email,
         updated_at: timestamp
       };
@@ -133,13 +139,14 @@ function downloadFinalPdf(sessionToken, claimId) {
 }
 
 function completeClaim(sessionToken, claimId) {
+  var gcsResult = { status: 'DISABLED', filename: '' };
   try {
     var user = requirePermission('can_generate_pdf', sessionToken);
-    var updated = withScriptLock_(function () {
+    var completion = withScriptLock_(function () {
       var claim = requireAccessibleClaim_(user, claimId);
       assert_(normalizeString_(claim.status).toUpperCase() === CLAIM_STATUSES.PDF_GENERATED,
         'CLAIM_NOT_READY_TO_COMPLETE', 'Klaim hanya dapat diselesaikan setelah PDF dibuat.');
-      finalPdfFile_(claim);
+      var sourceFile = finalPdfFile_(claim);
       var timestamp = now_();
       var changes = {
         status: CLAIM_STATUSES.COMPLETED,
@@ -150,13 +157,18 @@ function completeClaim(sessionToken, claimId) {
       };
       updateRecord_('CLAIMS', claim._rowNumber, changes);
       Object.keys(changes).forEach(function (key) { claim[key] = changes[key]; });
-      return claim;
+      return { claim: claim, sourceFile: sourceFile };
     });
-    writeAudit_(user, 'CLAIM_COMPLETED', updated.claim_id, '', {
-      claim_code: updated.claim_code,
-      pdf_version: Number(updated.pdf_version) || 0
+    gcsResult = deliverClaimPdfToGcsSafely_(completion.claim, completion.sourceFile);
+    writeAudit_(user, 'CLAIM_COMPLETED', completion.claim.claim_id, '', {
+      claim_code: completion.claim.claim_code,
+      pdf_version: Number(completion.claim.pdf_version) || 0,
+      gcs_status: gcsResult.status
     });
-    return success_(claimDetailForClient_(updated));
+    return success_({
+      claim: claimDetailForClient_(completion.claim),
+      gcs: gcsResult
+    });
   } catch (error) {
     return publicError_(error);
   }

@@ -85,7 +85,10 @@ function repairClaimDoctorSchemaMigration_(spreadsheet) {
     return { repairedRows: 0, migratedHeaders: false };
   }
   var expectedHeaders = SHEET_SCHEMAS.CLAIMS;
-  var preVerifierHeaders = expectedHeaders.filter(function (header) {
+  var preGcsHeaders = expectedHeaders.filter(function (header) {
+    return header.indexOf('gcs_pdf_') !== 0;
+  });
+  var preVerifierHeaders = preGcsHeaders.filter(function (header) {
     return header.indexOf('verifier_pdf_') !== 0;
   });
   var legacyHeaders = preVerifierHeaders.filter(function (header) { return header !== 'doctor_name'; });
@@ -94,6 +97,7 @@ function repairClaimDoctorSchemaMigration_(spreadsheet) {
     return normalizeString_(header);
   });
   var isCurrentSchema = sameHeaders_(actualHeaders, expectedHeaders) ||
+    sameHeaders_(actualHeaders, preGcsHeaders) ||
     sameHeaders_(actualHeaders, preVerifierHeaders);
   var isLegacySchema = sameHeaders_(actualHeaders, legacyHeaders);
   if (!isCurrentSchema && !isLegacySchema) {

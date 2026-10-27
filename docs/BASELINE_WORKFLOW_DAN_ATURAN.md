@@ -263,7 +263,7 @@ DRAFT
   -> PDF_GENERATED
   -> COMPLETED
 
-COMPLETED -- hanya ADMIN --> COLLECTING_DOCUMENTS
+COMPLETED -- pengguna berwenang memilih Buka Kembali Klaim --> COLLECTING_DOCUMENTS
 status aktif -- hanya ADMIN --> ARCHIVED
 ```
 
@@ -273,8 +273,8 @@ Aturan penting:
 - `READY` masih dikenali untuk kompatibilitas data/status lama, tetapi versi baseline ini tidak mengubah klaim ke `READY` secara otomatis;
 - pembuatan PDF diizinkan dari `COLLECTING_DOCUMENTS`, status kompatibilitas `READY`, atau `PDF_GENERATED` jika persyaratan dokumen terpenuhi;
 - klaim hanya dapat diselesaikan dari `PDF_GENERATED`;
-- `COMPLETED` mengunci perubahan berkas;
-- hanya administrator yang dapat membuka kembali klaim selesai;
+- `COMPLETED` mengunci perubahan data dan berkas;
+- pengguna yang tetap memiliki akses ke klaim harus memilih **Buka Kembali Klaim** sebelum data atau berkas dapat diubah;
 - klaim diarsipkan, bukan dihapus permanen.
 
 ### 8.2 Status kotak masuk Orthanc
